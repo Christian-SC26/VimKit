@@ -402,7 +402,8 @@
     this.curOp = null;
     this.options = {
       tabSize: 4, indentUnit: 4, indentWithTabs: false, readOnly: false,
-      lineComment: null, viewportLines: 30
+      lineComment: null, lineWrapping: false,
+      viewportWidth: 800, viewportHeight: 30 * HEADLESS_LINE_HEIGHT
     };
     if (options) for (var k in options) this.options[k] = options[k];
     this._handlers = {};
@@ -440,7 +441,27 @@
     if (e.preventDefault) e.preventDefault();
   };
   CodeMirror.findMatchingTag = function () { return null; };
-  CodeMirror.findEnclosingTag = function () { return undefined; };
+  CodeMirror.findEnclosingTag = function (cm, pos) {
+    var text = cm.doc.toString(), offset = cm.indexFromPos(pos);
+    if (text.charAt(offset) == "<") offset++;
+    var tagRe = /<(\/?)([A-Za-z][\w:.-]*)(?:\s[^<>]*?)?(\/?)>/g, stack = [], best = null, m;
+    while ((m = tagRe.exec(text))) {
+      var tag = { name: m[2], from: m.index, to: m.index + m[0].length };
+      if (m[3]) continue; // self-closing
+      if (!m[1]) { stack.push(tag); continue; }
+      for (var i = stack.length - 1; i >= 0; i--) {
+        if (stack[i].name !== tag.name) continue;
+        var open = stack[i];
+        stack.length = i;
+        if (open.from < offset && offset < tag.to && (!best || open.from >= best.open.from)) best = { open: open, close: tag };
+        break;
+      }
+      if (best && tag.from > offset && !stack.some(function (t) { return t.from < offset; })) break;
+    }
+    if (!best) return undefined;
+    function range(t) { return { from: cm.posFromIndex(t.from), to: cm.posFromIndex(t.to), tag: t.name }; }
+    return { open: range(best.open), close: range(best.close) };
+  };
   CodeMirror.keyName = undefined;
 
   CodeMirror.commands = {
@@ -454,7 +475,7 @@
         return "\n" + indent.slice(0, cm.doc.posFromIndex(from).ch);
       }, "end");
     },
-    indentAuto: function () {},
+    indentAuto: function (cm) { cm.indentAuto(); },
     toggleLineComment: function (cm) { cm.toggleLineComment(); },
     newlineAndIndentContinueComment: undefined,
     save: function (cm) { cm.host.event("save", ""); }
@@ -523,8 +544,10 @@
   proto.setCursor = function (line, ch) {
     if (typeof line === "object") { ch = line.ch; line = line.line; }
     var offset = this.indexFromPos({ line: line, ch: ch || 0 });
+    var outsideOperation = !this.curOp;
     this.$setSel([{ anchor: offset, head: offset }], 0);
     if (this.curOp && !this.curOp.isVimOp) this.onBeforeEndOperation();
+    if (outsideOperation) this.scrollIntoView();
   };
   proto.getCursor = function (p) {
     var r = this.$primary();
@@ -613,6 +636,7 @@
     }
     this.history.record(from, removed, text, selBefore);
     this.$lastChangeEndOffset = from + n;
+    this.$layoutCache = null;
 
     var curOp = this.curOp = this.curOp || {};
     if (curOp.$changeStart == null || curOp.$changeStart > from) curOp.$changeStart = from;
@@ -691,6 +715,7 @@
     this.$afterDispatch();
   };
   proto.setValue = function (text) {
+    this.$layoutCache = null;
     this.doc.setText(text);
     this.history.clear();
     this.marks = Object.create(null);
@@ -811,34 +836,79 @@
 
   // ---- search ----------------------------------------------------------------
 
-  function globalRegExp(query) {
-    var flags = query.flags.replace(/[gy]/g, "");
-    if (flags.indexOf("m") < 0) flags += "m";
-    return new RegExp(query.source, flags + "g");
+  // Iterates matches of `query` between `from` and `to` the way CodeMirror 6's
+  // RegExpCursor does: line by line on text cut off at `to`, skipping an
+  // empty match that touches the previous match. Patterns that can span
+  // lines run over the flat text instead.
+  function regExpCursor(cm, query, from, to) {
+    var re = new RegExp(query.source, "gm" + (query.ignoreCase ? "i" : ""));
+    var doc = cm.doc;
+    var lastTo = -1, matchPos = from;
+    if (/\\[sWDnr]|\n|\r|\[\^/.test(query.source)) {
+      var flat = doc.toString().slice(0, to);
+      return {
+        next: function () {
+          for (;;) {
+            if (matchPos > flat.length) return null;
+            re.lastIndex = matchPos;
+            var m = re.exec(flat);
+            if (!m) return null;
+            var mf = m.index, mt = mf + m[0].length;
+            matchPos = mt + (mf == mt ? 1 : 0);
+            if (mf < mt || mf > lastTo) { lastTo = mt; return { from: mf, to: mt, match: m }; }
+          }
+        }
+      };
+    }
+    var starts = doc.index();
+    var lineNo = doc.posFromIndex(from).line, lineStart, line;
+    function loadLine() {
+      lineStart = starts[lineNo];
+      line = doc.lines[lineNo];
+      if (lineStart + line.length > to) line = line.slice(0, Math.max(0, to - lineStart));
+    }
+    loadLine();
+    return {
+      next: function () {
+        for (;;) {
+          var off = matchPos - lineStart, m = null;
+          if (off <= line.length && matchPos <= to) { re.lastIndex = off; m = re.exec(line); }
+          if (m) {
+            var mf = lineStart + m.index, mt = mf + m[0].length;
+            matchPos = mt + (mf == mt ? 1 : 0);
+            if (mf == lineStart + line.length && lineNo + 1 < doc.lines.length) { lineNo++; loadLine(); }
+            if (mf < mt || mf > lastTo) { lastTo = mt; return { from: mf, to: mt, match: m }; }
+          } else if (lineStart + line.length < to && lineNo + 1 < doc.lines.length) {
+            lineNo++;
+            loadLine();
+            matchPos = lineStart;
+          } else {
+            return null;
+          }
+        }
+      }
+    };
   }
 
   proto.getSearchCursor = function (query, pos) {
     var cm = this, last = null, lastResult = null, afterEmptyMatch = false;
     if (pos.ch == undefined) pos.ch = Number.MAX_VALUE;
     var firstOffset = cm.indexFromPos(pos);
-    var re = globalRegExp(query);
 
     function nextMatch(from) {
-      var text = cm.doc.toString();
-      if (from > text.length) return null;
-      re.lastIndex = from;
-      var m = re.exec(text);
-      return m ? { from: m.index, to: m.index + m[0].length, match: m } : null;
+      var length = cm.doc.getLength();
+      if (from > length) return null;
+      return regExpCursor(cm, query, from, length).next();
     }
-    function prevMatch(endAt) {
-      var text = cm.doc.toString(), best = null, m;
-      re.lastIndex = 0;
-      while ((m = re.exec(text))) {
-        if (m.index >= endAt) break;
-        best = { from: m.index, to: m.index + m[0].length, match: m };
-        if (m[0].length === 0) re.lastIndex++;
+    var ChunkSize = 10000;
+    function prevMatchInRange(from, to) {
+      for (var size = 1; ; size++) {
+        var start = Math.max(from, to - size * ChunkSize);
+        var cursor = regExpCursor(cm, query, start, to), range = null, r;
+        while ((r = cursor.next())) range = r;
+        if (range && (start == from || range.from > start + 10)) return range;
+        if (start == from) return null;
       }
-      return best;
     }
     return {
       findNext: function () { return this.find(false); },
@@ -846,7 +916,7 @@
       find: function (back) {
         if (back) {
           var endAt = last ? (afterEmptyMatch ? last.to - 1 : last.from) : firstOffset;
-          last = endAt < 0 ? null : prevMatch(endAt);
+          last = endAt < 0 ? null : prevMatchInRange(0, endAt);
         } else {
           var startFrom = last ? (afterEmptyMatch ? last.to + 1 : last.to) : firstOffset;
           last = nextMatch(startFrom);
@@ -885,13 +955,12 @@
   // Flat [from, to, from, to, ...] list of search matches inside [from, to).
   proto.matchRanges = function (from, to, limit) {
     if (!this.searchQuery) return [];
-    var re = globalRegExp(this.searchQuery), text = this.doc.toString(), out = [], m;
-    re.lastIndex = Math.max(0, from || 0);
-    var end = to == null || to < 0 ? text.length : to;
+    var length = this.doc.getLength();
+    var end = to == null || to < 0 ? length : Math.min(to, length);
+    var cursor = regExpCursor(this, this.searchQuery, Math.max(0, from || 0), end), out = [], r;
     limit = limit || 10000;
-    while ((m = re.exec(text)) && m.index < end && out.length < limit * 2) {
-      if (m[0].length === 0) { re.lastIndex++; continue; }
-      out.push(m.index, m.index + m[0].length);
+    while ((r = cursor.next()) && out.length < limit * 2) {
+      if (r.to > r.from) out.push(r.from, r.to);
     }
     return out;
   };
@@ -915,7 +984,7 @@
       if (lineNo == where.line) pos = where.ch - (dir < 0 ? 1 : 0);
       for (; pos != end; pos += dir) {
         var ch = line.charAt(pos);
-        if (re.test(ch)) {
+        if (re.test(ch) && (style === undefined || this.getTokenTypeAt(new Pos(lineNo, pos + 1)) === style)) {
           var match = matching[ch];
           if (match && (match.charAt(1) == ">") == (dir > 0)) stack.push(ch);
           else if (!stack.length) return { pos: new Pos(lineNo, pos), ch: ch };
@@ -933,7 +1002,9 @@
     var other = match.charAt(0);
     var pair = dir > 0 ? ch + other : other + ch;
     var re = new RegExp("[" + pair.replace(/[\]\[]/g, "\\$&") + "]");
-    var found = this.scanForBracket(new Pos(pos.line, pos.ch + (dir > 0 ? 1 : 0)), dir, undefined, { bracketRegex: re });
+    // Like CodeMirror: only brackets in the same kind of token (code, string, comment) pair up.
+    var style = this.getTokenTypeAt(new Pos(pos.line, pos.ch + 1));
+    var found = this.scanForBracket(new Pos(pos.line, pos.ch + (dir > 0 ? 1 : 0)), dir, style, { bracketRegex: re });
     return { to: found && found.pos ? found.pos : undefined };
   };
 
@@ -951,7 +1022,6 @@
   };
   proto.indentLine = function (n, more) {
     var text = this.getLine(n);
-    if (more && !/\S/.test(text)) return;
     var current = /^[ \t]*/.exec(text)[0];
     var col = countColumn(current, this.getOption("tabSize"));
     var unit = this.getOption("indentUnit");
@@ -967,6 +1037,36 @@
       for (var l = a.line; l <= last; l++) if (!seen[l]) { seen[l] = true; lines.push(l); }
     });
     return lines;
+  };
+  // Indentation for line `n` from the previous non-blank line: one more unit
+  // after an unclosed bracket, one less before a closing bracket.
+  proto.$autoIndentColumn = function (n) {
+    var unit = this.getOption("indentUnit"), col = 0, prev = n - 1;
+    while (prev >= 0 && !/\S/.test(this.getLine(prev))) prev--;
+    if (prev >= 0) {
+      var text = this.getLine(prev), depth = 0;
+      col = countColumn(/^[ \t]*/.exec(text)[0], this.getOption("tabSize"));
+      for (var i = 0; i < text.length; i++) {
+        var c = text.charAt(i);
+        if (c == "(" || c == "[" || c == "{") depth++;
+        else if ((c == ")" || c == "]" || c == "}") && depth > 0) depth--;
+      }
+      if (depth > 0) col += unit;
+    }
+    if (/^[ \t]*[)\]}]/.test(this.getLine(n))) col = Math.max(0, col - unit);
+    return col;
+  };
+  // Re-indents the selected lines (Vim's `=`).
+  proto.indentAuto = function () {
+    var cm = this;
+    this.operation(function () {
+      cm.$selectedLines().sort(function (a, b) { return a - b; }).forEach(function (l) {
+        var text = cm.getLine(l);
+        if (!/\S/.test(text)) return;
+        var current = /^[ \t]*/.exec(text)[0], indent = cm.$makeIndent(cm.$autoIndentColumn(l));
+        if (indent !== current) cm.replaceRange(indent, new Pos(l, 0), new Pos(l, current.length));
+      });
+    });
   };
   proto.indentMore = function () {
     var cm = this;
@@ -1058,11 +1158,7 @@
     } else if (name == "goLineLeft" || name == "goLineRight") {
       var forward = name == "goLineRight";
       var head = this.$primary().head;
-      var target = this.host.lineBoundary(head, forward);
-      if (target == null || target < 0) {
-        var pos = this.posFromIndex(head);
-        target = this.indexFromPos(new Pos(pos.line, forward ? Number.MAX_VALUE : 0));
-      }
+      var target = this.$screenLineBoundary(head, forward);
       if (forward && target > head && target <= this.doc.getLength() && this.doc.slice(target - 1, target) !== "\n" &&
           target < this.doc.getLength() && this.doc.slice(target, target + 1) !== "\n") {
         target--; // wrapped line: stay on the last character of the visual line
@@ -1092,11 +1188,54 @@
     }
   };
   proto.toggleOverwrite = function (on) { this.state.overwrite = on; };
-  proto.getTokenTypeAt = function () { return ""; };
+  // "string", "comment" or "" for the token around `pos` (the host knows the syntax).
+  proto.getTokenTypeAt = function (pos) {
+    var type = this.host.tokenType ? this.host.tokenType(this.indexFromPos(pos)) : "";
+    return type || "";
+  };
   proto.getMode = function () { return { name: this.getOption("mode") }; };
   proto.foldCode = function () {};
 
-  // ---- view geometry (delegated to the host, with headless fallbacks) -------------
+  // ---- view geometry ----------------------------------------------------------------
+  //
+  // Delegated to the host. Without one, a virtual monospace layout is used:
+  // HEADLESS_CHAR_WIDTH × HEADLESS_LINE_HEIGHT cells, a viewport set by
+  // setSize(), and character wrapping when the lineWrapping option is on.
+
+  proto.$cols = function () {
+    if (!this.options.lineWrapping) return Infinity;
+    return Math.max(1, Math.floor(this.options.viewportWidth / HEADLESS_CHAR_WIDTH));
+  };
+  proto.$layout = function () {
+    var cols = this.$cols();
+    if (this.$layoutCache && this.$layoutCache.cols === cols) return this.$layoutCache;
+    var lines = this.doc.lines, prefix = new Array(lines.length), total = 0;
+    for (var i = 0; i < lines.length; i++) {
+      prefix[i] = total;
+      total += cols === Infinity ? 1 : Math.max(1, Math.ceil(lines[i].length / cols));
+    }
+    return (this.$layoutCache = { cols: cols, prefix: prefix, total: total });
+  };
+  proto.$rowsOf = function (line, layout) {
+    return (line + 1 < layout.prefix.length ? layout.prefix[line + 1] : layout.total) - layout.prefix[line];
+  };
+  // Screen row (global) and column of an offset.
+  proto.$visual = function (offset) {
+    var layout = this.$layout(), pos = this.posFromIndex(offset);
+    var r = layout.cols === Infinity ? 0 : Math.min(Math.floor(pos.ch / layout.cols), this.$rowsOf(pos.line, layout) - 1);
+    return { row: layout.prefix[pos.line] + r, col: pos.ch - (layout.cols === Infinity ? 0 : r * layout.cols), line: pos.line, r: r };
+  };
+  proto.$offsetAtVisual = function (row, col) {
+    var layout = this.$layout(), prefix = layout.prefix;
+    row = clamp(row, 0, layout.total - 1);
+    var lo = 0, hi = prefix.length - 1;
+    while (lo < hi) { var mid = (lo + hi + 1) >> 1; if (prefix[mid] <= row) lo = mid; else hi = mid - 1; }
+    var line = lo, r = row - prefix[line], len = this.doc.lines[line].length;
+    var rows = this.$rowsOf(line, layout), cols = layout.cols;
+    var start = cols === Infinity ? 0 : r * cols;
+    var end = cols === Infinity || r == rows - 1 ? len : (r + 1) * cols;
+    return this.indexFromPos(new Pos(line, clamp(start + Math.max(0, col), start, end)));
+  };
 
   proto.defaultTextHeight = function () {
     var h = this.host.lineHeight();
@@ -1105,68 +1244,76 @@
   proto.charCoords = function (pos) {
     var r = this.host.coords(this.indexFromPos(pos));
     if (r && r.length >= 3) return { left: r[0], top: r[1], bottom: r[2] };
-    var p = this.clipPos(pos);
-    return { left: p.ch * HEADLESS_CHAR_WIDTH, top: p.line * HEADLESS_LINE_HEIGHT, bottom: (p.line + 1) * HEADLESS_LINE_HEIGHT };
+    var v = this.$visual(this.indexFromPos(pos));
+    return { left: v.col * HEADLESS_CHAR_WIDTH, top: v.row * HEADLESS_LINE_HEIGHT, bottom: (v.row + 1) * HEADLESS_LINE_HEIGHT };
   };
   proto.coordsChar = function (coords) {
     var offset = this.host.offsetAt(coords.left, coords.top);
-    if (offset != null && offset >= 0) return this.posFromIndex(offset);
-    var line = clamp(Math.floor(coords.top / HEADLESS_LINE_HEIGHT), 0, this.lastLine());
-    return this.clipPos(new Pos(line, Math.round(coords.left / HEADLESS_CHAR_WIDTH)));
+    if (offset == null || offset < 0) {
+      offset = this.$offsetAtVisual(Math.floor(coords.top / HEADLESS_LINE_HEIGHT), Math.round(coords.left / HEADLESS_CHAR_WIDTH));
+    }
+    return this.posFromIndex(offset);
   };
   proto.getScrollInfo = function () {
     var r = this.host.scrollInfo();
     if (r && r.length >= 6) {
       return { left: r[0], top: r[1], width: r[2], height: r[3], clientWidth: r[4], clientHeight: r[5] };
     }
-    var lines = this.getOption("viewportLines");
+    var o = this.options;
     return {
       left: this.headlessScroll.left, top: this.headlessScroll.top,
-      width: 800, height: this.lineCount() * HEADLESS_LINE_HEIGHT,
-      clientWidth: 800, clientHeight: lines * HEADLESS_LINE_HEIGHT
+      width: o.viewportWidth, height: Math.max(this.$layout().total * HEADLESS_LINE_HEIGHT, o.viewportHeight),
+      clientWidth: o.viewportWidth, clientHeight: o.viewportHeight
     };
+  };
+  proto.$clampScroll = function (top) {
+    var max = Math.max(0, this.$layout().total * HEADLESS_LINE_HEIGHT - this.options.viewportHeight);
+    return clamp(top, 0, max);
   };
   proto.scrollTo = function (x, y) {
     if (x != null) this.headlessScroll.left = x;
-    if (y != null) this.headlessScroll.top = y;
+    if (y != null) this.headlessScroll.top = this.$clampScroll(y);
     this.host.scrollTo(x == null ? NaN : x, y == null ? NaN : y);
   };
   proto.scrollIntoView = function (pos, margin) {
     var offset = pos ? this.indexFromPos(pos) : this.$primary().head;
-    if (!pos) {
-      // Headless: keep the cursor line inside the simulated viewport.
-      var line = this.posFromIndex(offset).line, lines = this.getOption("viewportLines");
-      var top = this.headlessScroll.top / HEADLESS_LINE_HEIGHT;
-      if (line < top) this.headlessScroll.top = line * HEADLESS_LINE_HEIGHT;
-      else if (line >= top + lines) this.headlessScroll.top = (line - lines + 1) * HEADLESS_LINE_HEIGHT;
-    }
-    this.host.scrollIntoView(offset, margin || 0);
+    margin = margin || 0;
+    var row = this.$visual(offset).row, h = HEADLESS_LINE_HEIGHT, top = this.headlessScroll.top;
+    var height = this.options.viewportHeight;
+    if (row * h - margin < top) top = row * h - margin;
+    else if ((row + 1) * h + margin > top + height) top = (row + 1) * h + margin - height;
+    this.headlessScroll.top = this.$clampScroll(top);
+    this.host.scrollIntoView(offset, margin);
   };
   proto.findPosV = function (start, amount, unit, goalColumn) {
     var count = Math.round(Math.abs(amount)), forward = amount > 0;
-    var startOffset = this.indexFromPos(start);
-    var offset = startOffset, viaHost = true;
+    var offset = this.indexFromPos(start), viaHost = true;
     var goal = goalColumn == null ? -1 : goalColumn;
     for (var i = 0; i < count; i++) {
       var next = this.host.moveVertically(offset, forward, unit == "page", goal);
       if (next == null || next < 0) { viaHost = false; break; }
       offset = next;
     }
-    var pos;
-    if (viaHost) {
-      pos = this.posFromIndex(offset);
-    } else {
-      var lines = unit == "page" ? Math.max(1, this.getOption("viewportLines") - 2) * count : count;
-      var line = clamp(start.line + (forward ? lines : -lines), 0, this.lastLine());
-      var ch = goalColumn == null ? start.ch : Math.round(goalColumn / HEADLESS_CHAR_WIDTH);
-      pos = this.clipPos(new Pos(line, ch));
-      offset = this.indexFromPos(pos);
+    if (!viaHost) {
+      var v = this.$visual(this.indexFromPos(start)), total = this.$layout().total;
+      var step = unit == "page" ? Math.max(1, Math.floor(this.options.viewportHeight / HEADLESS_LINE_HEIGHT)) : 1;
+      var row = v.row + (forward ? 1 : -1) * step * count;
+      var col = goalColumn == null ? v.col : Math.round(goalColumn / HEADLESS_CHAR_WIDTH);
+      offset = row < 0 ? 0 : row >= total ? this.doc.getLength() : this.$offsetAtVisual(row, col);
     }
+    var pos = this.posFromIndex(offset);
     if ((amount < 0 && offset == 0 && goalColumn != 0 && start.line == 0 && start.ch != 0) ||
         (amount > 0 && offset == this.doc.getLength() && pos.ch != goalColumn && start.line == pos.line)) {
       pos.hitSide = true;
     }
     return pos;
+  };
+  // Start or end of the screen line containing `offset`.
+  proto.$screenLineBoundary = function (offset, forward) {
+    var target = this.host.lineBoundary(offset, forward);
+    if (target != null && target >= 0) return target;
+    var v = this.$visual(offset);
+    return this.$offsetAtVisual(v.row, forward ? Infinity : 0);
   };
 
   // ---- focus & DOM stand-ins ---------------------------------------------------------
@@ -1175,7 +1322,12 @@
   proto.blur = function () {};
   proto.getInputField = function () { return this.inputField; };
   proto.getWrapperElement = function () { return this.wrapper; };
-  proto.setSize = function () {};
+  proto.setSize = function (width, height) {
+    if (width != null) this.options.viewportWidth = parseFloat(width) || this.options.viewportWidth;
+    if (height != null) this.options.viewportHeight = parseFloat(height) || this.options.viewportHeight;
+    this.$layoutCache = null;
+    this.scrollTo(null, this.headlessScroll.top);
+  };
   proto.refresh = function () {};
   proto.save = function () { this.host.event("save", ""); };
 
@@ -1231,6 +1383,7 @@
     } else {
       this.banner = dialog; // e.g. "recording @q": shown, but keys keep going to vim
     }
+    this.wrapper.appendChild(template);
     function close(newVal) {
       if (typeof newVal == "string") {
         if (input) { input.value = newVal; input.selectionStart = input.selectionEnd = newVal.length; }
@@ -1240,6 +1393,7 @@
       if (closed) return;
       closed = true;
       if (cm.dialog === dialog) cm.dialog = null;
+      template.remove();
       if (cm.banner === dialog) cm.banner = null;
       if (options.onClose) options.onClose(template);
       signal(cm, "dialog");
@@ -1260,11 +1414,13 @@
       closed = true;
       clearTimeout(timer);
       if (cm.notification === note) cm.notification = null;
+      template.remove();
       cm.$emitState();
     }
     this.$closeNotification(close);
     var note = { text: template.textContent, isError: isErrorTemplate(template) };
     this.notification = note;
+    this.wrapper.appendChild(template);
     var duration = options && typeof options.duration !== "undefined" ? options.duration : 5000;
     if (duration) timer = setTimeout(close, duration);
     this.$emitState();
@@ -1366,6 +1522,10 @@
     }
     var vim = this.state.vim;
     if (!vim) return false;
+    // vim.js listens to keydown on the input field to record insert-mode
+    // deletions for `.` repeat.
+    var listeners = this.inputField._listeners.keydown;
+    if (listeners) listeners.slice().forEach(function (fn) { fn(e); });
     var key = Vim.vimKeyFromEvent(e, vim);
     if (!key) return false;
     if (key == "<Esc>" && !vim.insertMode && !vim.visualMode && this.searchQuery) {
@@ -1487,6 +1647,7 @@
   };
   proto.hostSetValue = function (text) {
     var head = this.$primary().head;
+    this.$layoutCache = null;
     this.doc.setText(text);
     this.history.clear();
     this.marks = Object.create(null);

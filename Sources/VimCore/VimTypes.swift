@@ -153,6 +153,12 @@ public struct VimOptions: Sendable, Hashable {
     }
 }
 
+/// Syntax category of a position, used by `%` and quote text objects to
+/// skip brackets and quotes inside strings and comments.
+public enum VimTokenType: String, Sendable {
+    case string, comment
+}
+
 /// Mode a mapping applies to.
 public enum VimMapMode: String, Sendable {
     case normal, insert, visual

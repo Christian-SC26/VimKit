@@ -1,0 +1,13 @@
+# codemirror-vim tests that VimKit fails on purpose. One test name per line.
+
+# VimKit has no code folding.
+vim_j_with_folding
+vim_k_with_folding
+
+# Tag text objects work lexically, in any text (as in Vim). CodeMirror 6 only
+# finds tags with an XML/HTML syntax tree, so it expects `dat` in JavaScript to do nothing.
+vim_dat_noop
+
+# Browser-only: <C-c> in visual mode lets the browser's copy event fire. On macOS
+# copy is Cmd-C, and VimKit treats <C-c> like Vim does (as <Esc>).
+vim_<C-c>copy

@@ -35,6 +35,9 @@ public protocol VimEngineDelegate: AnyObject {
     /// Start or end of the screen line (wrapped line fragment) containing `offset`.
     func vimEngine(_ engine: VimEngine, screenLineBoundaryFrom offset: Int, forward: Bool) -> Int?
     func vimEngineLineHeight(_ engine: VimEngine) -> CGFloat?
+    /// Whether the character just before `offset` is inside a string or comment.
+    /// Return nil when the host has no syntax information.
+    func vimEngine(_ engine: VimEngine, tokenTypeAt offset: Int) -> VimTokenType?
 }
 
 public extension VimEngineDelegate {
@@ -53,6 +56,7 @@ public extension VimEngineDelegate {
     func vimEngine(_ engine: VimEngine, verticalMoveFrom offset: Int, forward: Bool, byPage: Bool, goalX: CGFloat?) -> Int? { nil }
     func vimEngine(_ engine: VimEngine, screenLineBoundaryFrom offset: Int, forward: Bool) -> Int? { nil }
     func vimEngineLineHeight(_ engine: VimEngine) -> CGFloat? { nil }
+    func vimEngine(_ engine: VimEngine, tokenTypeAt offset: Int) -> VimTokenType? { nil }
 }
 
 /// One Vim-enabled document.
@@ -279,6 +283,12 @@ public final class VimEngine {
             return self.delegate?.vimEngineLineHeight(self).map(Double.init) ?? 0
         }
 
+        let tokenType: @convention(block) (Double) -> String = { [weak self] offset in
+            guard let self else { return "" }
+            return self.delegate?.vimEngine(self, tokenTypeAt: Int(offset))?.rawValue ?? ""
+        }
+
+        install("tokenType", unsafeBitCast(tokenType, to: AnyObject.self))
         install("replace", unsafeBitCast(replace, to: AnyObject.self))
         install("select", unsafeBitCast(select, to: AnyObject.self))
         install("state", unsafeBitCast(state, to: AnyObject.self))

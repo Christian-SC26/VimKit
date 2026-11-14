@@ -129,7 +129,27 @@ NSTextView ⇄ VimTextView ⇄ VimEngine (Swift) ⇄ JavaScriptCore
 ### Updating the engine
 
 Copy `packages/codemirror-vim-core/vim.js` from a newer codemirror-vim
-release over `Sources/VimCore/Resources/vim.js` and run `swift test`.
+release over `Sources/VimCore/Resources/vim.js`. Copy that release's
+`test/vim_test.js` over `Tests/VimCoreTests/Resources/vim_test.js`, then run
+`swift test`.
+
+### Upstream test suite
+
+`UpstreamSuiteTests` runs codemirror-vim's own test suite (716 cases)
+through the adapter's real key path in JavaScriptCore. Currently 712 pass.
+The 4 tests VimKit fails on purpose, each with its reason, are listed in
+`Tests/VimCoreTests/Resources/upstream-known-failures.txt`. The test fails
+on any other failure, and also when a listed test starts passing. Set
+`VIMKIT_UPSTREAM_REPORT=/path/file.tsv` to write every failure with its
+message to that file.
+
+### Syntax awareness
+
+`%` skips brackets inside strings and comments, and so do the quote text
+objects, when the delegate implements
+`vimEngine(_:tokenTypeAt:)`. That method returns `.string`, `.comment` or
+`nil` for the character before an offset. `=` re-indents lines by bracket
+depth.
 
 ## Demo
 
@@ -140,15 +160,17 @@ swift run VimKitDemo
 ## Status and roadmap
 
 Working: everything in the test suite (`swift test`) plus the demo app —
-motions, operators, text objects, registers (including `+`), macros,
-counts, `.` repeat, visual / line / block modes, replace mode, search with
-highlighting, ex commands, mappings, undo/redo grouping, non-Latin layouts.
+motions, operators, text objects (including tags), registers (including
+`+`), macros, counts, `.` repeat, visual / line / block modes, replace mode,
+search with highlighting, ex commands, mappings, undo/redo grouping,
+non-Latin layouts. 712 of the 716 tests in codemirror-vim's own suite pass.
 
 Planned:
 
 - [ ] `VimUITextView` for iPadOS with a hardware keyboard
-- [ ] Run codemirror-vim's own test suite (~450 cases) against the adapter
-- [ ] Syntax-aware `%` and text objects (`getTokenTypeAt`) via a delegate hook
+- [x] Run codemirror-vim's own test suite against the adapter
+- [x] Syntax-aware `%` and text objects via a delegate hook
+- [ ] `tokenTypeAt` from NSTextView syntax-highlighting attributes
 - [ ] Code folding (`zc`, `zo`)
 - [ ] Block cursor drawn with inverted text instead of a translucent box
 

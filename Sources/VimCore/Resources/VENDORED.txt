@@ -1,2 +1,4 @@
 Vendored from https://github.com/replit/codemirror-vim
 packages/codemirror-vim-core/vim.js @ c3131c442069cbe762c7d3c78295b2d98e853bc6 (2026-11-01, @replit/codemirror-vim 6.4.0)
+
+Tests/VimCoreTests/Resources/vim_test.js is codemirror-vim's test/vim_test.js from the same commit (MIT).

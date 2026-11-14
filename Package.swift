@@ -23,7 +23,15 @@ let package = Package(
         ),
         .target(name: "VimKit", dependencies: ["VimCore"]),
         .executableTarget(name: "VimKitDemo", dependencies: ["VimKit"]),
-        .testTarget(name: "VimCoreTests", dependencies: ["VimCore"]),
+        .testTarget(
+            name: "VimCoreTests",
+            dependencies: ["VimCore"],
+            resources: [
+                .copy("Resources/vim_test.js"),
+                .copy("Resources/upstream-harness.js"),
+                .copy("Resources/upstream-known-failures.txt"),
+            ]
+        ),
         .testTarget(name: "VimKitTests", dependencies: ["VimKit"]),
     ]
 )
