@@ -300,8 +300,17 @@
       }
       this.starts = starts;
       this.length = offset - 1;
+      this.pivot = -1;
+      this.pending = 0;
     }
     return this.starts;
+  };
+  // Offset where line `n` starts. Line starts after `pivot` are stored
+  // `pending` too small: shifting them is deferred, so a run of edits moving
+  // through the document (:%s, undoing it) costs O(lines) in total.
+  Doc.prototype.lineStart = function (n) {
+    var starts = this.index();
+    return starts[n] + (n > this.pivot ? this.pending : 0);
   };
   Doc.prototype.getLength = function () { this.index(); return this.length; };
   Doc.prototype.toString = function () {
@@ -312,18 +321,17 @@
     var line = pos.line, ch = pos.ch;
     if (line < 0) { line = 0; ch = 0; }
     if (line >= this.lines.length) { line = this.lines.length - 1; ch = Infinity; }
-    var starts = this.index();
-    return starts[line] + clamp(ch || 0, 0, this.lines[line].length);
+    return this.lineStart(line) + clamp(ch || 0, 0, this.lines[line].length);
   };
   Doc.prototype.posFromIndex = function (offset) {
-    var starts = this.index();
+    var starts = this.index(), pivot = this.pivot, pending = this.pending;
     offset = clamp(offset, 0, this.length);
     var lo = 0, hi = starts.length - 1;
     while (lo < hi) {
       var mid = (lo + hi + 1) >> 1;
-      if (starts[mid] <= offset) lo = mid; else hi = mid - 1;
+      if (starts[mid] + (mid > pivot ? pending : 0) <= offset) lo = mid; else hi = mid - 1;
     }
-    return new Pos(lo, offset - starts[lo]);
+    return new Pos(lo, offset - this.lineStart(lo));
   };
   Doc.prototype.slice = function (from, to) {
     if (to <= from) return "";
@@ -342,8 +350,20 @@
     if (a.line === b.line && inserted.length === 1) {
       this.lines[a.line] = inserted[0];
       if (this.starts) {
-        var delta = text.length - (to - from);
-        for (var i = a.line + 1; i < this.starts.length; i++) this.starts[i] += delta;
+        var delta = text.length - (to - from), line = a.line, st = this.starts, j;
+        if (this.pending === 0) {
+          this.pivot = line;
+          this.pending = delta;
+        } else if (line >= this.pivot) {
+          for (j = this.pivot + 1; j <= line; j++) st[j] += this.pending;
+          this.pivot = line;
+          this.pending += delta;
+        } else {
+          // Move the pivot down: lines in (line, pivot] are exact now and become implicit.
+          for (j = line + 1; j <= this.pivot; j++) st[j] -= this.pending;
+          this.pivot = line;
+          this.pending += delta;
+        }
         this.length += delta;
       }
       this.value = null;
@@ -478,7 +498,7 @@
     indentAuto: function (cm) { cm.indentAuto(); },
     toggleLineComment: function (cm) { cm.toggleLineComment(); },
     newlineAndIndentContinueComment: undefined,
-    save: function (cm) { cm.host.event("save", ""); }
+    save: function (cm) { cm.$host().event("save", ""); }
   };
 
   // Keys vim.js sends back to the editor while replaying insert-mode mappings.
@@ -646,11 +666,43 @@
     if (!curOp.changeHandlers)
       curOp.changeHandlers = this._handlers["change"] && this._handlers["change"].slice();
 
+    if (curOp.$scroll) curOp.$scroll.offset = mapPos(curOp.$scroll.offset, from, to, n, 1);
     if (!fromHost) {
       this.$selDirty = true;
-      this.host.replace(from, to, text);
+      this.$queueEdit(from, to, text, len);
     }
     if (this.searchQuery) this.$searchDirty = true;
+  };
+
+  // ---- edits sent to the host ---------------------------------------------------------
+  //
+  // Edits are queued and sent in one `host.edits([from, to, text, ...])` call
+  // when the operation ends, or earlier when the host is asked anything that
+  // depends on its text (geometry, events). Offsets of each edit refer to the
+  // text after the previous one. A large batch (e.g. :%s over a big file) is
+  // sent as one replacement of the region that changed.
+  proto.$queueEdit = function (from, to, text, lengthBefore) {
+    var q = this.$edits;
+    if (!q) q = this.$edits = { list: [], base: lengthBefore, lo: lengthBefore, tail: lengthBefore };
+    q.list.push(from, to, text);
+    if (from < q.lo) q.lo = from;
+    if (lengthBefore - to < q.tail) q.tail = lengthBefore - to;
+  };
+  proto.$flushEdits = function () {
+    var q = this.$edits;
+    if (!q) return;
+    this.$edits = null;
+    var count = q.list.length / 3, oldEnd = q.base - q.tail;
+    if (count > 1 && (count > 16 || oldEnd - q.lo <= 4096)) {
+      var newEnd = this.doc.getLength() - q.tail;
+      this.host.edits([q.lo, oldEnd, this.doc.slice(q.lo, newEnd)]);
+    } else {
+      this.host.edits(q.list);
+    }
+  };
+  proto.$host = function () {
+    this.$flushEdits();
+    return this.host;
   };
 
   // Replaces every selection range with text(from, to, index). `place` is
@@ -784,7 +836,7 @@
     return result;
   };
   proto.onBeforeEndOperation = function () {
-    var op = this.curOp, scroll = false;
+    var op = this.curOp, scroll = false, pendingScroll = op && op.$scroll;
     this.$ending = true;
     try {
       if (op) {
@@ -799,9 +851,11 @@
       this.$ending = false;
     }
     this.$flush();
+    if (pendingScroll) this.$scrollNow(pendingScroll.offset, pendingScroll.margin);
     if (scroll) this.scrollIntoView();
   };
   proto.$flush = function () {
+    this.$flushEdits();
     if (this.$selDirty) {
       this.$selDirty = false;
       var flat = [];
@@ -810,7 +864,7 @@
     }
     if (this.$searchDirty) {
       this.$searchDirty = false;
-      this.host.event("highlight", this.searchQuery ? "changed" : "");
+      this.$host().event("highlight", this.searchQuery ? "changed" : "");
     }
     this.$emitState();
   };
@@ -860,10 +914,10 @@
         }
       };
     }
-    var starts = doc.index();
+
     var lineNo = doc.posFromIndex(from).line, lineStart, line;
     function loadLine() {
-      lineStart = starts[lineNo];
+      lineStart = doc.lineStart(lineNo);
       line = doc.lines[lineNo];
       if (lineStart + line.length > to) line = line.slice(0, Math.max(0, to - lineStart));
     }
@@ -1190,7 +1244,7 @@
   proto.toggleOverwrite = function (on) { this.state.overwrite = on; };
   // "string", "comment" or "" for the token around `pos` (the host knows the syntax).
   proto.getTokenTypeAt = function (pos) {
-    var type = this.host.tokenType ? this.host.tokenType(this.indexFromPos(pos)) : "";
+    var type = this.host.tokenType ? this.$host().tokenType(this.indexFromPos(pos)) : "";
     return type || "";
   };
   proto.getMode = function () { return { name: this.getOption("mode") }; };
@@ -1242,20 +1296,20 @@
     return h > 0 ? h : HEADLESS_LINE_HEIGHT;
   };
   proto.charCoords = function (pos) {
-    var r = this.host.coords(this.indexFromPos(pos));
+    var r = this.$host().coords(this.indexFromPos(pos));
     if (r && r.length >= 3) return { left: r[0], top: r[1], bottom: r[2] };
     var v = this.$visual(this.indexFromPos(pos));
     return { left: v.col * HEADLESS_CHAR_WIDTH, top: v.row * HEADLESS_LINE_HEIGHT, bottom: (v.row + 1) * HEADLESS_LINE_HEIGHT };
   };
   proto.coordsChar = function (coords) {
-    var offset = this.host.offsetAt(coords.left, coords.top);
+    var offset = this.$host().offsetAt(coords.left, coords.top);
     if (offset == null || offset < 0) {
       offset = this.$offsetAtVisual(Math.floor(coords.top / HEADLESS_LINE_HEIGHT), Math.round(coords.left / HEADLESS_CHAR_WIDTH));
     }
     return this.posFromIndex(offset);
   };
   proto.getScrollInfo = function () {
-    var r = this.host.scrollInfo();
+    var r = this.$host().scrollInfo();
     if (r && r.length >= 6) {
       return { left: r[0], top: r[1], width: r[2], height: r[3], clientWidth: r[4], clientHeight: r[5] };
     }
@@ -1273,24 +1327,32 @@
   proto.scrollTo = function (x, y) {
     if (x != null) this.headlessScroll.left = x;
     if (y != null) this.headlessScroll.top = this.$clampScroll(y);
-    this.host.scrollTo(x == null ? NaN : x, y == null ? NaN : y);
+    this.$host().scrollTo(x == null ? NaN : x, y == null ? NaN : y);
   };
+  // Inside an operation the scroll happens when it ends (like CodeMirror),
+  // so a command that edits many places scrolls once.
   proto.scrollIntoView = function (pos, margin) {
     var offset = pos ? this.indexFromPos(pos) : this.$primary().head;
+    if (this.curOp) { this.curOp.$scroll = { offset: offset, margin: margin || 0 }; return; }
+    this.$scrollNow(offset, margin);
+  };
+  proto.$scrollNow = function (offset, margin) {
     margin = margin || 0;
+    var info = this.$host().scrollInfo();
+    if (info && info.length >= 6) { this.host.scrollIntoView(offset, margin); return; }
     var row = this.$visual(offset).row, h = HEADLESS_LINE_HEIGHT, top = this.headlessScroll.top;
     var height = this.options.viewportHeight;
     if (row * h - margin < top) top = row * h - margin;
     else if ((row + 1) * h + margin > top + height) top = (row + 1) * h + margin - height;
     this.headlessScroll.top = this.$clampScroll(top);
-    this.host.scrollIntoView(offset, margin);
+    this.$host().scrollIntoView(offset, margin);
   };
   proto.findPosV = function (start, amount, unit, goalColumn) {
     var count = Math.round(Math.abs(amount)), forward = amount > 0;
     var offset = this.indexFromPos(start), viaHost = true;
     var goal = goalColumn == null ? -1 : goalColumn;
     for (var i = 0; i < count; i++) {
-      var next = this.host.moveVertically(offset, forward, unit == "page", goal);
+      var next = this.$host().moveVertically(offset, forward, unit == "page", goal);
       if (next == null || next < 0) { viaHost = false; break; }
       offset = next;
     }
@@ -1310,7 +1372,7 @@
   };
   // Start or end of the screen line containing `offset`.
   proto.$screenLineBoundary = function (offset, forward) {
-    var target = this.host.lineBoundary(offset, forward);
+    var target = this.$host().lineBoundary(offset, forward);
     if (target != null && target >= 0) return target;
     var v = this.$visual(offset);
     return this.$offsetAtVisual(v.row, forward ? Infinity : 0);
@@ -1318,7 +1380,7 @@
 
   // ---- focus & DOM stand-ins ---------------------------------------------------------
 
-  proto.focus = function () { this.host.event("focus", ""); };
+  proto.focus = function () { this.$host().event("focus", ""); };
   proto.blur = function () {};
   proto.getInputField = function () { return this.inputField; };
   proto.getWrapperElement = function () { return this.wrapper; };
@@ -1329,7 +1391,7 @@
     this.scrollTo(null, this.headlessScroll.top);
   };
   proto.refresh = function () {};
-  proto.save = function () { this.host.event("save", ""); };
+  proto.save = function () { this.$host().event("save", ""); };
 
   // ---- multiple selections -------------------------------------------------------------
 
@@ -1626,6 +1688,7 @@
   // The native view changed text on its own (typing in insert mode, paste,
   // dictation, autocorrect).
   proto.hostReplace = function (from, to, text) {
+    this.$flushEdits();
     var vim = this.state.vim;
     var grouped = vim && vim.insertMode;
     if (!grouped) this.history.close();
@@ -1634,6 +1697,7 @@
     this.$afterDispatch();
   };
   proto.hostSelect = function (flat, primary) {
+    this.$flushEdits();
     var ranges = [];
     for (var i = 0; i + 1 < flat.length; i += 2) ranges.push({ anchor: flat[i], head: flat[i + 1] });
     if (!ranges.length) return;
@@ -1646,6 +1710,7 @@
     this.$afterDispatch();
   };
   proto.hostSetValue = function (text) {
+    this.$edits = null; // the host's text replaces anything not yet sent
     var head = this.$primary().head;
     this.$layoutCache = null;
     this.doc.setText(text);
@@ -1690,7 +1755,7 @@
         line: params.line == null ? null : params.line,
         lineEnd: params.lineEnd == null ? null : params.lineEnd
       };
-      cm.host.ex(JSON.stringify(payload));
+      cm.$host().ex(JSON.stringify(payload));
     });
   }
 

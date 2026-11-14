@@ -143,6 +143,31 @@ on any other failure, and also when a listed test starts passing. Set
 `VIMKIT_UPSTREAM_REPORT=/path/file.tsv` to write every failure with its
 message to that file.
 
+### Performance
+
+Measured through `VimTextView` in a window, on a 20,000-line (1 MB) file
+with line wrapping, debug build. Most commands take under 5 ms per key.
+The first jump to the end of a file lays out the whole file once
+(about 0.25 s). `:%s` over every line together with its undo takes about
+1 s. Run `VIMKIT_BENCH=1 swift test --filter PerformanceTests` for the full
+table.
+
+How this is kept fast:
+
+* The engine sends a command's edits to the view in one batch, inside one
+  `NSTextStorage` editing session. Many edits (`:%s`, undoing it) are
+  merged into a single replacement of the changed region.
+* Line offsets update lazily, so a run of edits through the file costs
+  O(lines) in total.
+* `VimTextView` keeps exact TextKit 2 layout up to the furthest position it
+  has measured. Without this, TextKit 2's estimated line heights would make
+  `zb`, `H`, `L` and `<C-d>` land on the wrong line.
+
+`WindowScenarioTests` checks text, cursor, scrolling and selection in a real
+window. It covers `G`, search, `<C-d>`/`<C-u>`/`<C-f>`/`<C-b>`, `zt`/`zz`/`zb`,
+`H`/`M`/`L`, `gj`/`gk`/`g0`/`g$` on wrapped lines, visual mode, `:%s` with
+undo and redo, the block cursor, and insert-mode `.` repeat.
+
 ### Syntax awareness
 
 `%` skips brackets inside strings and comments, and so do the quote text

@@ -11,7 +11,14 @@ import JavaScriptCore
 @MainActor
 public protocol VimEngineDelegate: AnyObject {
     /// Mirror a text change made by vim. `range` is in the text before the change.
+    ///
+    /// Changes arrive in batches, one per vim command, between
+    /// ``vimEngineWillApplyEdits(_:)`` and ``vimEngineDidApplyEdits(_:)``. A
+    /// command that edits many places (`:%s`, undoing it) is sent as one
+    /// replacement of the whole region that changed.
     func vimEngine(_ engine: VimEngine, replaceCharactersIn range: NSRange, with text: String)
+    func vimEngineWillApplyEdits(_ engine: VimEngine)
+    func vimEngineDidApplyEdits(_ engine: VimEngine)
     func vimEngine(_ engine: VimEngine, setSelections selections: [VimSelection], primary: Int)
     func vimEngineDidChangeStatus(_ engine: VimEngine)
     /// `:w` or `:write`.
@@ -42,6 +49,8 @@ public protocol VimEngineDelegate: AnyObject {
 
 public extension VimEngineDelegate {
     func vimEngine(_ engine: VimEngine, replaceCharactersIn range: NSRange, with text: String) {}
+    func vimEngineWillApplyEdits(_ engine: VimEngine) {}
+    func vimEngineDidApplyEdits(_ engine: VimEngine) {}
     func vimEngine(_ engine: VimEngine, setSelections selections: [VimSelection], primary: Int) {}
     func vimEngineDidChangeStatus(_ engine: VimEngine) {}
     func vimEngineDidRequestSave(_ engine: VimEngine) {}
@@ -207,10 +216,19 @@ public final class VimEngine {
             host.setObject(block, forKeyedSubscript: name as NSString)
         }
 
-        let replace: @convention(block) (Double, Double, String) -> Void = { [weak self] from, to, text in
-            guard let self else { return }
-            let range = NSRange(location: Int(from), length: Int(to - from))
-            self.delegate?.vimEngine(self, replaceCharactersIn: range, with: text)
+        // [from, to, text, from, to, text, ...]; each edit refers to the text after the previous one.
+        let edits: @convention(block) (JSValue) -> Void = { [weak self] list in
+            guard let self, let delegate = self.delegate else { return }
+            let length = Int(list.objectForKeyedSubscript("length")?.toInt32() ?? 0)
+            guard length >= 3 else { return }
+            delegate.vimEngineWillApplyEdits(self)
+            for index in stride(from: 0, to: length - 2, by: 3) {
+                let from = Int(list.atIndex(index).toInt32())
+                let to = Int(list.atIndex(index + 1).toInt32())
+                let text = list.atIndex(index + 2).toString() ?? ""
+                delegate.vimEngine(self, replaceCharactersIn: NSRange(location: from, length: to - from), with: text)
+            }
+            delegate.vimEngineDidApplyEdits(self)
         }
         let select: @convention(block) (JSValue, Double) -> Void = { [weak self] flatValue, primary in
             guard let self else { return }
@@ -289,7 +307,7 @@ public final class VimEngine {
         }
 
         install("tokenType", unsafeBitCast(tokenType, to: AnyObject.self))
-        install("replace", unsafeBitCast(replace, to: AnyObject.self))
+        install("edits", unsafeBitCast(edits, to: AnyObject.self))
         install("select", unsafeBitCast(select, to: AnyObject.self))
         install("state", unsafeBitCast(state, to: AnyObject.self))
         install("event", unsafeBitCast(event, to: AnyObject.self))

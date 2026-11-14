@@ -42,6 +42,9 @@ open class VimTextView: NSTextView {
     private var pendingEdits: [[(range: NSRange, text: String)]] = []
     private var pendingSelection = false
     private let blockCursor = NSView()
+    /// Text before this offset has exact (not estimated) TextKit 2 layout.
+    private var exactLayoutEnd = 0
+    private var exactLayoutWidth: CGFloat = -1
 
     // MARK: Initialization
 
@@ -83,6 +86,12 @@ open class VimTextView: NSTextView {
         blockCursor.wantsLayer = true
         blockCursor.isHidden = true
         addSubview(blockCursor)
+        if let textStorage {
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(vimTextStorageDidProcessEditing(_:)),
+                name: NSTextStorage.didProcessEditingNotification, object: textStorage
+            )
+        }
         vim.setText(string)
         updateCursorAppearance()
     }
@@ -242,7 +251,7 @@ open class VimTextView: NSTextView {
 
         if let layoutManager = textLayoutManager {
             guard let range = textRange(for: NSRange(location: offset, length: length)) else { return nil }
-            layoutManager.ensureLayout(for: range)
+            ensureContiguousLayout(through: range)
             layoutManager.enumerateTextSegments(in: range, type: .standard, options: []) { _, frame, _, _ in
                 rect = rect.map { $0.union(frame) } ?? frame
                 return true
@@ -265,6 +274,65 @@ open class VimTextView: NSTextView {
         if !isCharacter || rect.width < 1 { rect.size.width = spaceWidth }
         if rect.height < 1 { rect.size.height = lineHeight }
         return rect
+    }
+
+    /// TextKit 2 places text it has not laid out yet at estimated positions,
+    /// which move once the text before it is laid out (so `zb`, `H` or `<C-d>`
+    /// would land on the wrong line). Laying out everything from the start of
+    /// the document up to `range` makes the positions exact.
+    /// Only text past `exactLayoutEnd` is laid out; edits and width changes move it back.
+    private func ensureContiguousLayout(through range: NSTextRange) {
+        guard let layoutManager = textLayoutManager, let content = layoutManager.textContentManager else { return }
+        let width = textContainer?.size.width ?? 0
+        if width != exactLayoutWidth {
+            exactLayoutWidth = width
+            exactLayoutEnd = 0
+        }
+        let documentStart = content.documentRange.location
+        let target = content.offset(from: documentStart, to: range.endLocation)
+        if target > exactLayoutEnd,
+           let start = content.location(documentStart, offsetBy: exactLayoutEnd),
+           let missing = NSTextRange(location: start, end: range.endLocation) {
+            layoutManager.ensureLayout(for: missing)
+            exactLayoutEnd = target
+        } else {
+            layoutManager.ensureLayout(for: range)
+        }
+    }
+
+    @objc private func vimTextStorageDidProcessEditing(_ notification: Notification) {
+        guard let storage = notification.object as? NSTextStorage else { return }
+        exactLayoutEnd = min(exactLayoutEnd, storage.editedRange.location)
+    }
+
+    /// Offset of the character at `point` (view coordinates), laying out that
+    /// part of the text first. Unlike `characterIndexForInsertion(at:)`, this
+    /// also works outside the laid-out viewport (TextKit 2).
+    public func characterIndex(at point: CGPoint) -> Int {
+        let text = string as NSString
+        guard let layoutManager = textLayoutManager, let content = layoutManager.textContentManager else {
+            return characterIndexForInsertion(at: point)
+        }
+        let local = CGPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y)
+        if local.y < 0 { return 0 }
+        layoutManager.ensureLayout(for: CGRect(x: 0, y: local.y, width: 1, height: 1))
+        guard let fragment = layoutManager.textLayoutFragment(for: local) else {
+            return text.length
+        }
+        let frame = fragment.layoutFragmentFrame
+        let start = content.offset(from: content.documentRange.location, to: fragment.rangeInElement.location)
+        let lines = fragment.textLineFragments
+        let y = local.y - frame.minY
+        guard let line = lines.first(where: { y < $0.typographicBounds.maxY }) ?? lines.last else { return start }
+        let bounds = line.typographicBounds
+        let lineStart = start + line.characterRange.location
+        var lineEnd = min(start + line.characterRange.location + line.characterRange.length, text.length)
+        if lineEnd > lineStart, text.character(at: lineEnd - 1) == 0x0A { lineEnd -= 1 }
+        let x = local.x - frame.minX - bounds.minX
+        if x <= 0 { return lineStart }
+        let index = line.characterIndex(for: CGPoint(x: x, y: bounds.height / 2))
+        if index == NSNotFound { return lineEnd } // past the end of the line
+        return min(max(start + index, lineStart), lineEnd)
     }
 
     // MARK: Search highlight
@@ -291,14 +359,22 @@ open class VimTextView: NSTextView {
 // MARK: - VimEngineDelegate
 
 extension VimTextView: VimEngineDelegate {
+    public func vimEngineWillApplyEdits(_ engine: VimEngine) {
+        syncSuppression += 1
+        textStorage?.beginEditing()
+    }
+
     public func vimEngine(_ engine: VimEngine, replaceCharactersIn range: NSRange, with text: String) {
         guard let textStorage else { return }
-        syncSuppression += 1
-        defer { syncSuppression -= 1 }
         // The engine owns the text: apply even if a delegate would veto it.
         _ = shouldChangeText(in: range, replacementString: text)
         textStorage.replaceCharacters(in: range, with: NSAttributedString(string: text, attributes: typingAttributes))
+    }
+
+    public func vimEngineDidApplyEdits(_ engine: VimEngine) {
+        textStorage?.endEditing()
         didChangeText()
+        syncSuppression -= 1
     }
 
     public func vimEngine(_ engine: VimEngine, setSelections selections: [VimSelection], primary: Int) {
@@ -337,7 +413,7 @@ extension VimTextView: VimEngineDelegate {
     }
 
     public func vimEngine(_ engine: VimEngine, characterIndexAt point: CGPoint) -> Int? {
-        characterIndexForInsertion(at: point)
+        characterIndex(at: point)
     }
 
     public func vimEngineScrollInfo(_ engine: VimEngine) -> VimScrollInfo? {
@@ -367,11 +443,11 @@ extension VimTextView: VimEngineDelegate {
     public func vimEngine(_ engine: VimEngine, verticalMoveFrom offset: Int, forward: Bool, byPage: Bool, goalX: CGFloat?) -> Int? {
         guard let rect = characterRect(at: offset) else { return nil }
         let length = (string as NSString).length
-        let step = byPage ? max(visibleRect.height - lineHeight, lineHeight) : rect.height
+        // A page is the visible height less half a line, as in CodeMirror.
+        let step = byPage ? max(visibleRect.height - lineHeight / 2, lineHeight) : rect.height
         let y = forward ? rect.midY + step : rect.midY - step
         if y < textContainerOrigin.y { return 0 }
-        if let last = characterRect(at: length), y > last.maxY { return length }
-        let index = characterIndexForInsertion(at: NSPoint(x: (goalX ?? rect.minX) + 1, y: y))
+        let index = characterIndex(at: NSPoint(x: (goalX ?? rect.minX) + 1, y: y))
         return min(max(index, 0), length)
     }
 

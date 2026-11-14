@@ -42,9 +42,17 @@
     return tokens;
   }
 
-  function makeHost(mode) {
+  // The host keeps its own copy of the text, built only from the edits the
+  // adapter sends, and each test checks it still equals the engine's text.
+  function makeHost(mode, text) {
     var cache = null;
     var host = Object.create(headlessHost);
+    host.mirror = text;
+    host.edits = function (list) {
+      for (var i = 0; i < list.length; i += 3) {
+        host.mirror = host.mirror.slice(0, list[i]) + list[i + 2] + host.mirror.slice(list[i + 1]);
+      }
+    };
     host.tokenType = function (offset) {
       if (mode == "xml" || !current) return "";
       var text = current.getValue();
@@ -60,7 +68,7 @@
   }
 
   var headlessHost = {
-    replace: noop, select: noop, state: noop, event: noop, ex: noop,
+    edits: noop, select: noop, state: noop, event: noop, ex: noop,
     coords: function () { return []; }, offsetAt: function () { return -1; },
     scrollInfo: function () { return []; }, scrollTo: noop, scrollIntoView: noop,
     moveVertically: function () { return -1; }, lineBoundary: function () { return -1; },
@@ -146,7 +154,7 @@
   function CM(place, options) {
     if (current) { current.destroy(); current = null; }
     options = options || {};
-    var cm = VimKit.createEditor(makeHost(options.mode), options.value || "", {
+    var cm = VimKit.createEditor(makeHost(options.mode, options.value || ""), options.value || "", {
       tabSize: options.tabSize || options.indentUnit || 4,
       indentUnit: options.indentUnit || 2,
       indentWithTabs: !!options.indentWithTabs,
@@ -156,6 +164,9 @@
     // The reference page renders into a 420×300 editor.
     cm.setSize(420, 300);
     cm.inputField._handleInputEventForTest = function (text) { cm.replaceSelection(text); };
+    // setValue is how a host loads text, so it does not echo back; mirror it here.
+    var setValue = cm.setValue;
+    cm.setValue = function (text) { setValue.call(cm, text); cm.host.mirror = text; };
     current = cm;
     return cm;
   }
@@ -208,6 +219,14 @@
         } catch (e) {
           promise = Promise.reject(e);
         }
+        promise = promise.then(function () {
+          if (current) {
+            current.$flushEdits();
+            if (current.host.mirror !== current.getValue()) {
+              throw new Error("host text out of sync: " + JSON.stringify(current.host.mirror.slice(0, 80)));
+            }
+          }
+        });
         promise.then(function () {
           (t.expectedFail ? results.failed : results.passed).push(t.expectedFail ? { name: t.name, message: "passed but marked expectedFail" } : t.name);
         }, function (e) {
