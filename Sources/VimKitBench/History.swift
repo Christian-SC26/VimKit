@@ -57,6 +57,20 @@ extension BenchResult {
 }
 
 extension BenchMeta {
+    /// Other work competed for CPU or memory: wall times are unreliable.
+    var isNoisy: Bool {
+        let busy = max(loadAverageStart ?? 0, loadAverageEnd ?? 0) > Double(max(performanceCores, 1)) * 0.5
+        return busy || (pageins ?? 0) > 200
+    }
+
+    var loadSummary: String {
+        guard let start = loadAverageStart else { return "—" }
+        var text = String(format: "load %.1f→%.1f", start, loadAverageEnd ?? 0)
+        if let pageins { text += ", подкачка \(pageins) стр." }
+        if let effectiveGHz, effectiveGHz > 0 { text += String(format: ", %.2f ГГц", effectiveGHz) }
+        return text
+    }
+
     var mode: String {
         var parts: [String] = []
         if quick { parts.append("--quick") }
@@ -95,9 +109,11 @@ func writeHistoryMarkdown(_ runs: [BenchRun], to url: URL) throws {
         "",
         "Время — медиана на повтор, мс, `VimTextView` в окне, самый большой размер файла в прогоне",
         "(обычно 20 000 строк). «Медиана операций» — медиана медиан всех операций, кроме жизненного цикла.",
+        "«⚠︎ шумно» — во время прогона машину грузило что-то ещё (load average выше половины P-ядер",
+        "или подкачка страниц): стенное время такого прогона завышено, сравнивайте CPU и инструкции в отчёте.",
         "",
     ]
-    let header = ["№", "Дата", "Язык", "Что изменилось", "Коммит", "Сборка, режим", "Прогон, с"]
+    let header = ["№", "Дата", "Язык", "Что изменилось", "Коммит", "Сборка, режим", "Нагрузка системы", "Прогон, с"]
         + trackedOperations + ["Медиана операций"]
     lines.append("| " + header.map(cell).joined(separator: " | ") + " |")
     lines.append("|" + header.map { _ in "---" }.joined(separator: "|") + "|")
@@ -113,6 +129,7 @@ func writeHistoryMarkdown(_ runs: [BenchRun], to url: URL) throws {
         var row = [
             meta.runNumber.map(String.init) ?? "—", date, meta.language ?? "—", meta.note ?? "—", meta.commit,
             "\(meta.build), \(meta.mode)" + (size != 20_000 && size > 0 ? ", \(size) строк" : "") + (level == .engine ? ", движок" : ""),
+            (meta.isNoisy ? "⚠︎ шумно: " : "") + meta.loadSummary,
             String(format: "%.0f", meta.durationSeconds),
         ]
         row += trackedOperations.map { name in ms(selected.first { $0.name == name }?.wallMedian) }

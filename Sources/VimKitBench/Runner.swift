@@ -67,6 +67,13 @@ struct BenchMeta: Codable, Sendable {
     /// What changed since the previous run.
     var note: String?
     var filter: String?
+    /// 1-minute load average before and after the run; high values mean other work competed.
+    var loadAverageStart: Double?
+    var loadAverageEnd: Double?
+    /// Pages the bench process had to read back from disk (memory pressure).
+    var pageins: Int?
+    /// Cycles per CPU second over the run, GHz (lower when hot or on E-cores).
+    var effectiveGHz: Double?
 }
 
 struct BenchRun: Codable, Sendable {
@@ -146,6 +153,8 @@ final class Runner {
     private(set) var nanojoulesPerCycle = 0.0
     /// Average power of the process while the bench ran, W.
     private(set) var averagePowerW = 0.0
+    private(set) var totalPageins = 0
+    private(set) var effectiveGHz = 0.0
 
     init(options: BenchOptions) {
         self.options = options
@@ -199,6 +208,8 @@ final class Runner {
         let end = Probe.rusage()
         var total = Usage()
         total.add(from: runStart, to: end)
+        totalPageins = Int(total.pageins)
+        if total.processCPU > 0 { effectiveGHz = Double(total.cycles) / Double(total.processCPU) }
         guard total.cycles > 0, total.energy > 0 else { return }
         nanojoulesPerCycle = Double(total.energy) / Double(total.cycles)
         averagePowerW = Double(total.energy) / Double(Probe.wallNanoseconds - wallStart)

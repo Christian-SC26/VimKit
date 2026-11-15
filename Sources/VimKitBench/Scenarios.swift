@@ -1,3 +1,4 @@
+#if os(macOS)
 /// One measured operation: `setup` and `between` are not timed, `keys` is
 /// timed once per repeat. `between` runs after every repeat but the last
 /// (usually `u`, so each repeat starts from the same text).
@@ -152,3 +153,4 @@ let scenarios: [Scenario] = [
     .init(category: "Свёртки", name: "j по свёрнутым блокам", setup: "zM", keys: "j", repeats: 200),
     .init(category: "Свёртки", name: "zf3j", setup: fn, keys: "zf3j", between: "zd", repeats: 30),
 ]
+#endif

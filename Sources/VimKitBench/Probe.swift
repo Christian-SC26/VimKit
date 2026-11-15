@@ -1,3 +1,4 @@
+#if os(macOS)
 import Darwin
 import Foundation
 import os
@@ -33,6 +34,11 @@ enum Probe {
         var stats = malloc_statistics_t()
         malloc_zone_statistics(nil, &stats)
         return UInt64(stats.size_in_use)
+    }
+
+    static func loadAverage() -> Double {
+        var loads = [Double](repeating: 0, count: 3)
+        return getloadavg(&loads, 3) > 0 ? loads[0] : 0
     }
 
     static func sysctlString(_ name: String) -> String? {
@@ -115,3 +121,4 @@ final class FootprintSampler: Sendable {
         }
     }
 }
+#endif

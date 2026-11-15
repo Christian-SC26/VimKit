@@ -14,6 +14,7 @@ let buildConfiguration = "release"
 
 let started = Date()
 let baseFootprint = Double(Probe.rusage().ri_phys_footprint) / 1_048_576
+let loadAtStart = Probe.loadAverage()
 let runner = Runner(options: options)
 runner.runAll()
 
@@ -57,7 +58,11 @@ let meta = BenchMeta(
     runNumber: history.nextNumber,
     language: options.language,
     note: options.note,
-    filter: options.filter
+    filter: options.filter,
+    loadAverageStart: loadAtStart,
+    loadAverageEnd: Probe.loadAverage(),
+    pageins: runner.totalPageins,
+    effectiveGHz: runner.effectiveGHz
 )
 let run = BenchRun(meta: meta, results: runner.results)
 
@@ -95,6 +100,10 @@ try reportTemplate.replacingOccurrences(of: "__BENCH_DATA__", with: reportJSON)
     .write(to: reportURL, atomically: true, encoding: .utf8)
 
 // MARK: Console summary
+
+if meta.isNoisy {
+    print("⚠︎ Во время прогона была внешняя нагрузка (\(meta.loadSummary)). Стенное время ненадёжно — сравнивайте CPU и инструкции.")
+}
 
 print("\nVimKitBench · прогон №\(meta.runNumber ?? 0) · \(meta.language ?? "—") · \(meta.chip) · \(meta.os) · \(meta.build) · \(meta.commit) · \(String(format: "%.0f", meta.durationSeconds)) с")
 let slow = run.results.filter { !$0.lifecycle && $0.wallP95 > 1000.0 / 60 }

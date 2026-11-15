@@ -117,7 +117,7 @@ open class VimTextView: NSTextView {
             super.keyDown(with: event)
             return
         }
-        if vim.handle(key) { return }
+        if coalescingCursorUpdates({ vim.handle(key) }) { return }
         super.keyDown(with: event)
     }
 
@@ -239,7 +239,30 @@ open class VimTextView: NSTextView {
         drawsBackground && backgroundColor.alphaComponent > 0 ? backgroundColor : .textBackgroundColor
     }
 
+    /// Nesting depth of ``coalescingCursorUpdates(_:)``.
+    private var cursorUpdatesDeferred = 0
+    private var blockCursorNeedsUpdate = false
+
+    /// Runs `body` with block cursor updates folded into one at the end. One
+    /// key can change mode and selection thousands of times (`:%norm`, macros),
+    /// and every update lays out text up to the cursor.
+    private func coalescingCursorUpdates<T>(_ body: () -> T) -> T {
+        cursorUpdatesDeferred += 1
+        defer {
+            cursorUpdatesDeferred -= 1
+            if cursorUpdatesDeferred == 0, blockCursorNeedsUpdate {
+                blockCursorNeedsUpdate = false
+                updateBlockCursor()
+            }
+        }
+        return body()
+    }
+
     private func updateBlockCursor() {
+        if cursorUpdatesDeferred > 0 {
+            blockCursorNeedsUpdate = true
+            return
+        }
         let offset = vim.status.cursorOffset
         let previous = blockCursorFrame
         guard showsBlockCursor, let rect = characterRect(at: offset) else {

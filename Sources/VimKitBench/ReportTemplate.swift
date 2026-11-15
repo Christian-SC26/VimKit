@@ -1,3 +1,4 @@
+#if os(macOS)
 /// Self-contained HTML report; `__BENCH_DATA__` is replaced by the run JSON.
 let reportTemplate = #"""
 <!doctype html>
@@ -83,7 +84,7 @@ td.note{white-space:normal;min-width:220px;max-width:420px}
   <div class="tablewrap"><table id="lifecycle"></table></div>
 
   <h2>История прогонов</h2>
-  <div class="controls" style="position:static;border:0;padding:0 0 10px"><select id="histOp"></select><span class="muted" id="histScope"></span></div>
+  <div class="controls" style="position:static;border:0;padding:0 0 10px"><select id="histOp"></select><div class="seg" id="histMetric"></div><span class="muted" id="histScope"></span></div>
   <div class="card hist" id="historyChart"></div>
   <div class="tablewrap" style="margin-top:12px"><table id="historyTable"></table></div>
 
@@ -184,6 +185,8 @@ function renderMeta() {
   if (m.quick) parts.push('быстрый режим (--quick)');
   document.getElementById('meta').innerHTML = parts.filter(Boolean).map(p => `<span>${esc(p)}</span>`).join('');
   const banners = [];
+  const noisy = m.loadAverageStart != null && (Math.max(m.loadAverageStart, m.loadAverageEnd || 0) > Math.max(m.performanceCores, 1) * 0.5 || (m.pageins || 0) > 200);
+  if (noisy) banners.push(`Во время прогона машину грузило что-то ещё: load average ${nf(m.loadAverageStart, 1)} → ${nf(m.loadAverageEnd || 0, 1)}, подкачка ${m.pageins || 0} страниц, ${nf(m.effectiveGHz || 0, 2)} ГГц. Стенное время завышено — сравнивайте CPU и инструкции.`);
   if (m.build !== 'release') banners.push('Отладочная сборка: цифры завышены в разы. Для реальных замеров: <code>swift run -c release VimKitBench</code>.');
   const broken = ALL.filter(r => !r.inSync || r.jsErrors > 0);
   if (broken.length) banners.push(`Проблемы в ${broken.length} замерах: ` + broken.slice(0, 6).map(r => `${esc(r.name)} (${LEVEL_LABEL[r.level]}, ${r.lines}: ${!r.inSync ? 'вьюха и движок разошлись' : 'ошибок JS ' + r.jsErrors})`).join('; '));
@@ -317,23 +320,31 @@ function renderHistory() {
   }
   sel.innerHTML = names.slice().sort((a, b) => a.split('|')[1].localeCompare(b.split('|')[1])).map(n => `<option value="${esc(n)}" ${n === state.histOp ? 'selected' : ''}>${esc(n.split('|')[1])} — ${esc(n.split('|')[0])}</option>`).join('');
   sel.onchange = e => { state.histOp = e.target.value; update(); };
-  document.getElementById('histScope').textContent = `медиана, ${LEVEL_LABEL[state.level].toLowerCase()}, ${nf(state.lines, 0)} строк · цвет — язык изменения`;
+  const HM = [['0', 'Время'], ['1', 'CPU'], ['3', 'Инструкции']];
+  if (!HM.some(x => x[0] === String(state.histMetric))) state.histMetric = '0';
+  const mi = +state.histMetric, fmtH = v => mi === 3 ? count(v) : ms(v) + ' мс';
+  document.getElementById('histMetric').innerHTML = HM.map(([v, l]) => `<button data-hm="${v}" class="${v === String(state.histMetric) ? 'on' : ''}">${l}</button>`).join('');
+  document.querySelectorAll('[data-hm]').forEach(b => b.onclick = () => { state.histMetric = b.dataset.hm; update(); });
+  document.getElementById('histScope').textContent = `медиана, ${LEVEL_LABEL[state.level].toLowerCase()}, ${nf(state.lines, 0)} строк · цвет — язык изменения · бледные столбцы — шумные прогоны`;
   const key = prefix + state.histOp;
-  const points = HISTORY.map(h => ({meta: h.meta, v: h.values[key] ? h.values[key][0] : null}));
+  const pick = h => h.values[key] && h.values[key][mi] != null ? h.values[key][mi] : null;
+  const points = HISTORY.map(h => ({meta: h.meta, v: pick(h)}));
+  const isNoisy = m => m.loadAverageStart != null && (Math.max(m.loadAverageStart, m.loadAverageEnd || 0) > Math.max(m.performanceCores, 1) * 0.5 || (m.pageins || 0) > 200);
   const max = Math.max(...points.map(p => p.v || 0), 1e-9);
-  chart.innerHTML = points.map(p => `<div class="col" title="${esc(p.meta.note || '')}"><div class="v">${p.v == null ? '—' : ms(p.v) + ' мс'}</div>` +
-    `<div class="bar" style="height:${p.v == null ? 0 : Math.max(1, p.v / max * 150).toFixed(1)}px;background:${langColor(p.meta.language)}"></div>` +
-    `<div class="n">№${p.meta.runNumber || '?'}<br>${esc(p.meta.language || '—')}</div></div>`).join('');
-  table.innerHTML = '<thead><tr><th class="l">№</th><th class="l">Дата</th><th class="l">Язык</th><th class="l">Что изменилось</th><th class="l">Коммит</th><th class="l">Сборка, режим</th><th>Выбранная операция, мс</th><th>Δ к предыдущему</th><th>Медиана операций, мс</th></tr></thead><tbody>' +
+  chart.innerHTML = points.map(p => `<div class="col" title="${esc(p.meta.note || '')}"><div class="v">${p.v == null ? '—' : fmtH(p.v)}</div>` +
+    `<div class="bar" style="height:${p.v == null ? 0 : Math.max(1, p.v / max * 150).toFixed(1)}px;background:${langColor(p.meta.language)};${isNoisy(p.meta) ? 'opacity:.45' : ''}"></div>` +
+    `<div class="n">№${p.meta.runNumber || '?'}${isNoisy(p.meta) ? ' ⚠︎' : ''}<br>${esc(p.meta.language || '—')}</div></div>`).join('');
+  table.innerHTML = '<thead><tr><th class="l">№</th><th class="l">Дата</th><th class="l">Язык</th><th class="l">Что изменилось</th><th class="l">Коммит</th><th class="l">Сборка, режим</th><th class="l">Нагрузка</th><th>Выбранная операция</th><th>Δ к предыдущему</th><th>Медиана операций, мс</th></tr></thead><tbody>' +
     HISTORY.slice().reverse().map((h, i, arr) => {
-      const v = h.values[key] ? h.values[key][0] : null, prev = arr[i + 1] && arr[i + 1].values[key] ? arr[i + 1].values[key][0] : null;
+      const v = pick(h), prev = arr[i + 1] ? pick(arr[i + 1]) : null;
       const d = v != null && prev ? (v - prev) / prev : null;
       const all = Object.entries(h.values).filter(([k]) => k.startsWith(prefix) && !k.startsWith(prefix + 'Стенд|') && !k.startsWith(prefix + 'Жизненный цикл|')).map(([, x]) => x[0]).sort((a, b) => a - b);
       const med = all.length ? all[all.length >> 1] : null;
       const mode = [h.meta.build, h.meta.quick ? '--quick' : null, h.meta.filter ? '--filter ' + h.meta.filter : null].filter(Boolean).join(', ');
       return `<tr><td class="l">${h.meta.runNumber || '—'}</td><td class="l">${new Date(h.meta.date).toLocaleString('ru-RU')}</td><td class="l">${chip(h.meta.language)}</td>` +
         `<td class="l note">${esc(h.meta.note || '—')}</td><td class="l"><code>${esc(h.meta.commit)}</code></td><td class="l muted">${esc(mode)}</td>` +
-        `<td>${v == null ? '—' : ms(v)}</td><td>${d == null ? '—' : `<span class="${Math.abs(d) < 0.1 ? 'muted' : d > 0 ? 'bad' : 'good'}">${d > 0 ? '+' : ''}${nf(d * 100, 0)}%</span>`}</td><td>${med == null ? '—' : ms(med)}</td></tr>`;
+        `<td class="l ${isNoisy(h.meta) ? 'warn' : 'muted'}">${h.meta.loadAverageStart == null ? '—' : (isNoisy(h.meta) ? '⚠︎ ' : '') + 'load ' + nf(h.meta.loadAverageStart, 1) + '→' + nf(h.meta.loadAverageEnd || 0, 1) + ', подкачка ' + (h.meta.pageins || 0) + (h.meta.effectiveGHz ? ', ' + nf(h.meta.effectiveGHz, 2) + ' ГГц' : '')}</td>` +
+        `<td>${v == null ? '—' : fmtH(v)}</td><td>${d == null ? '—' : `<span class="${Math.abs(d) < 0.1 ? 'muted' : d > 0 ? 'bad' : 'good'}">${d > 0 ? '+' : ''}${nf(d * 100, 0)}%</span>`}</td><td>${med == null ? '—' : ms(med)}</td></tr>`;
     }).join('') + '</tbody>';
 }
 
@@ -343,3 +354,4 @@ renderMeta(); renderLifecycle(); update();
 </body>
 </html>
 """#
+#endif
