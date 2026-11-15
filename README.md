@@ -195,7 +195,14 @@ How this is kept fast:
   `NSTextStorage` editing session. Many edits (`:%s`, undoing it) are
   merged into a single replacement of the changed region.
 * Line offsets update lazily, so a run of edits through the file costs
-  O(lines) in total.
+  O(lines) in total; this holds for edits that add or delete lines too
+  (`:g/x/d`).
+* Commands that change many lines at once (`>`, `<`, `=` over a range,
+  undo and redo of large changes) update the document, cursors, marks,
+  folds and the view in one pass instead of one edit per line.
+* JavaScriptCore runs the adapter without a JIT (always so on iOS), so
+  scans over the whole file are done in Swift: fold blocks for `zM` and
+  indentation for `>`, `<`, `=` over 32 or more lines.
 * `VimTextView` keeps exact TextKit 2 layout up to the furthest position it
   has measured. Without this, TextKit 2's estimated line heights would make
   `zb`, `H`, `L` and `<C-d>` land on the wrong line.

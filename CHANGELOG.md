@@ -21,6 +21,14 @@
   13 ms in JavaScript, 0.62 ms in Swift; `zM` in the view 48 → 36 ms.
   VimKitBench compares it with the same kernel in Goose
   (`Kernels/fold_blocks.goose`, 0.67 ms), which the libraries do not link.
+- `>`, `<` and `=` over many lines: the new columns are computed in Swift
+  and the lines change in one batch (document, cursors, marks, folds, undo
+  history and the view at once). Undo and redo of large changes are batched
+  too. 20,000 lines in the engine: `ggVG>` 102 → 14 ms, `ggVG=` 60 → 4 ms,
+  `u` after `:%s` 43 → 7 ms.
+- Deleting or inserting lines no longer re-indexes the whole document:
+  `:g/note 5/d` on 20,000 lines 155 → 13 ms; `dd`, `p`, `J`, `o` about 2×
+  faster on large files.
 
 ## 0.2.1 — 2026-11-15
 
