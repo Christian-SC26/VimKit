@@ -178,11 +178,10 @@ struct VimUITextViewTests {
     @Test func blockCursorOnlyOutsideInsertMode() {
         let (_, view) = makeView("abc")
         type(view, "l")
-        let cursor = view.subviews.last
-        #expect(cursor?.isHidden == false)
+        #expect(view.blockCursorFrame != nil)
         #expect(view.tintColor == .clear)
         type(view, "i")
-        #expect(cursor?.isHidden == true)
+        #expect(view.blockCursorFrame == nil)
         #expect(view.tintColor != .clear)
     }
 

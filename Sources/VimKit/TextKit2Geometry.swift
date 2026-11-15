@@ -34,6 +34,7 @@ final class TextKit2Geometry {
     /// Call when the text changed at `location` (layout after it is no longer exact).
     func noteEdit(at location: Int) {
         exactLayoutEnd = min(exactLayoutEnd, max(0, location))
+        if cursor != nil { cursorStale = true }
     }
 
     /// TextKit 2 places text it has not laid out yet at estimated positions,
@@ -127,14 +128,67 @@ final class TextKit2Geometry {
         return nil
     }
 
+    // MARK: Search highlight and block cursor
+    //
+    // Both are rendering attributes. The cursor paints its character with the
+    // cursor color behind it and the text background color on top (inverted).
+
+    private var highlightRanges: [NSRange] = []
+    private var highlightColor: Any?
+    private var cursor: (range: NSRange, background: NSObject, foreground: NSObject)?
+    /// The text changed since the cursor was drawn; its old range may be stale.
+    private var cursorStale = false
+
+    /// The character range the block cursor paints, if any.
+    var cursorRange: NSRange? { cursor?.range }
+
     /// Replaces the search highlight with `ranges`.
     func setHighlights(_ ranges: [NSRange], color: Any) {
         guard let layoutManager else { return }
+        highlightRanges = ranges
+        highlightColor = color
         layoutManager.removeRenderingAttribute(.backgroundColor, for: layoutManager.documentRange)
+        layoutManager.removeRenderingAttribute(.foregroundColor, for: layoutManager.documentRange)
+        cursorStale = false
         for match in ranges {
             if let range = textRange(for: match) {
                 layoutManager.addRenderingAttribute(.backgroundColor, value: color, for: range)
             }
         }
+        applyCursor()
+    }
+
+    /// Paints the block cursor over `range` (one character), or removes it.
+    func setCursor(_ range: NSRange?, background: NSObject, foreground: NSObject) {
+        guard let layoutManager else { return }
+        if !cursorStale, let old = cursor, let range, old.range == range,
+           old.background.isEqual(background), old.foreground.isEqual(foreground) {
+            return
+        }
+        if cursorStale {
+            // Edits may have moved or dropped the old attributes; repaint everything.
+            cursor = range.map { ($0, background, foreground) }
+            setHighlights(highlightRanges, color: highlightColor ?? NSNull())
+            return
+        }
+        if let old = cursor?.range, let oldRange = textRange(for: old) {
+            layoutManager.removeRenderingAttribute(.foregroundColor, for: oldRange)
+            layoutManager.removeRenderingAttribute(.backgroundColor, for: oldRange)
+            if let highlightColor {
+                for match in highlightRanges where NSIntersectionRange(match, old).length > 0 {
+                    if let overlap = textRange(for: NSIntersectionRange(match, old)) {
+                        layoutManager.addRenderingAttribute(.backgroundColor, value: highlightColor, for: overlap)
+                    }
+                }
+            }
+        }
+        cursor = range.map { ($0, background, foreground) }
+        applyCursor()
+    }
+
+    private func applyCursor() {
+        guard let layoutManager, let cursor, let range = textRange(for: cursor.range) else { return }
+        layoutManager.addRenderingAttribute(.backgroundColor, value: cursor.background, for: range)
+        layoutManager.addRenderingAttribute(.foregroundColor, value: cursor.foreground, for: range)
     }
 }

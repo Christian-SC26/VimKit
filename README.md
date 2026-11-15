@@ -192,6 +192,15 @@ objects, when the delegate implements
 `nil` for the character before an offset. `=` re-indents lines by bracket
 depth.
 
+`VimTextView` and `VimUITextView` implement it for you. Mark strings and
+comments with the `.vimTokenType` attribute while highlighting syntax:
+
+```swift
+textStorage.addAttribute(.vimTokenType, value: VimTokenType.comment, range: commentRange)
+```
+
+Or answer directly with `textView.tokenTypeProvider = { offset in ... }`.
+
 ## Demo
 
 macOS:
@@ -234,9 +243,9 @@ Planned:
 - [x] `VimUITextView` for iPadOS with a hardware keyboard
 - [x] Run codemirror-vim's own test suite against the adapter
 - [x] Syntax-aware `%` and text objects via a delegate hook
-- [ ] `tokenTypeAt` from NSTextView syntax-highlighting attributes
+- [x] `tokenTypeAt` from text attributes (`.vimTokenType`)
 - [ ] Code folding (`zc`, `zo`)
-- [ ] Block cursor drawn with inverted text instead of a translucent box
+- [x] Block cursor drawn with inverted text instead of a translucent box
 
 ## License
 

@@ -38,6 +38,10 @@ open class VimTextView: NSTextView {
         didSet { updateSearchHighlight() }
     }
 
+    /// Tells vim whether the character before an offset is in a string or a
+    /// comment (for `%` and `=`). When nil, the `.vimTokenType` text attribute is used.
+    public var tokenTypeProvider: ((Int) -> VimTokenType?)?
+
     private var syncSuppression = 0
     private var pendingEdits: [[(range: NSRange, text: String)]] = []
     private var pendingSelection = false
@@ -210,17 +214,43 @@ open class VimTextView: NSTextView {
 
     private func updateCursorAppearance() {
         insertionPointColor = showsBlockCursor ? .clear : caretColor
-        blockCursor.layer?.backgroundColor = caretColor.withAlphaComponent(0.45).cgColor
+        // TextKit 2 paints the character under the cursor inverted; the box is
+        // only drawn where there is no character (line ends). TextKit 1 uses a
+        // translucent box everywhere.
+        let boxColor = textKit2 != nil ? caretColor : caretColor.withAlphaComponent(0.45)
+        blockCursor.layer?.backgroundColor = boxColor.cgColor
         updateBlockCursor()
     }
 
+    /// Where the block cursor is drawn (view coordinates), or nil when hidden.
+    private(set) var blockCursorFrame: CGRect?
+
+    /// Whether the cursor is drawn as a box (where there is no character to invert).
+    var showsCursorBox: Bool { !blockCursor.isHidden }
+
+    /// Text color of the character under the block cursor.
+    private var cursorTextColor: NSColor {
+        drawsBackground && backgroundColor.alphaComponent > 0 ? backgroundColor : .textBackgroundColor
+    }
+
     private func updateBlockCursor() {
-        guard showsBlockCursor, let rect = characterRect(at: vim.status.cursorOffset) else {
+        let offset = vim.status.cursorOffset
+        guard showsBlockCursor, let rect = characterRect(at: offset) else {
+            blockCursorFrame = nil
             blockCursor.isHidden = true
+            textKit2?.setCursor(nil, background: caretColor, foreground: cursorTextColor)
             return
         }
-        blockCursor.frame = rect.integral
-        blockCursor.isHidden = false
+        blockCursorFrame = rect
+        let text = string as NSString
+        if let textKit2, offset < text.length, ![0x0A, 0x0D].contains(text.character(at: offset)) {
+            textKit2.setCursor(text.rangeOfComposedCharacterSequence(at: offset), background: caretColor, foreground: cursorTextColor)
+            blockCursor.isHidden = true
+        } else {
+            textKit2?.setCursor(nil, background: caretColor, foreground: cursorTextColor)
+            blockCursor.frame = rect.integral
+            blockCursor.isHidden = false
+        }
     }
 
     // MARK: Geometry
@@ -299,7 +329,9 @@ extension VimTextView: VimEngineDelegate {
         guard let textStorage else { return }
         // The engine owns the text: apply even if a delegate would veto it.
         _ = shouldChangeText(in: range, replacementString: text)
-        textStorage.replaceCharacters(in: range, with: NSAttributedString(string: text, attributes: typingAttributes))
+        var attributes = typingAttributes
+        attributes[.vimTokenType] = nil
+        textStorage.replaceCharacters(in: range, with: NSAttributedString(string: text, attributes: attributes))
     }
 
     public func vimEngineDidApplyEdits(_ engine: VimEngine) {
@@ -387,5 +419,10 @@ extension VimTextView: VimEngineDelegate {
     }
 
     public func vimEngineLineHeight(_ engine: VimEngine) -> CGFloat? { lineHeight }
+
+    public func vimEngine(_ engine: VimEngine, tokenTypeAt offset: Int) -> VimTokenType? {
+        if let tokenTypeProvider { return tokenTypeProvider(offset) }
+        return VimTokenType.at(offset - 1, in: textStorage)
+    }
 }
 #endif
