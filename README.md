@@ -152,8 +152,8 @@ xcodebuild test -scheme VimKit-Package \
 ### Upstream test suite
 
 `UpstreamSuiteTests` runs codemirror-vim's own test suite (716 cases)
-through the adapter's real key path in JavaScriptCore. Currently 712 pass.
-The 4 tests VimKit fails on purpose, each with its reason, are listed in
+through the adapter's real key path in JavaScriptCore. Currently 714 pass.
+The 2 tests VimKit fails on purpose, each with its reason, are listed in
 `Tests/VimCoreTests/Resources/upstream-known-failures.txt`. The test fails
 on any other failure, and also when a listed test starts passing. Set
 `VIMKIT_UPSTREAM_REPORT=/path/file.tsv` to write every failure with its
