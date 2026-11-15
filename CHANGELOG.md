@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — 2026-11-15
 
 - Folding: `zc`, `zo`, `za`, `zM`, `zR`, `zf{motion}`, `zd`, `zE`. Blocks are
   found by indentation. The views hide folded lines and show "⋯ N lines";
@@ -8,7 +8,8 @@
   `vimEngineFoldsDidChange(_:)` for other hosts.
 - Linewise operators (`dd`, `yy`, `>>`, counts) take a closed fold as one
   line, and so does visual line mode; edits inside a fold keep it.
-- The block cursor paints the character under it inverted.
+- The block cursor paints the character under it inverted, in live windows
+  too (TextKit 2 is told to redraw the text under it).
 - `.vimTokenType` text attribute and `tokenTypeProvider` for syntax-aware
   `%` and `=` in the views.
 - codemirror-vim suite: 714 of 716 (the folding tests now pass).

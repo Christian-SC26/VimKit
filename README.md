@@ -33,7 +33,7 @@ struct ContentView: View {
 Add the package in Xcode (*File → Add Package Dependencies…*) or in `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/Christian-SC26/VimKit.git", from: "0.1.0")
+.package(url: "https://github.com/Christian-SC26/VimKit.git", from: "0.2.0")
 ```
 
 ## Usage
@@ -253,7 +253,7 @@ Working: everything in the test suite (`swift test`) plus the demo app —
 motions, operators, text objects (including tags), registers (including
 `+`), macros, counts, `.` repeat, visual / line / block modes, replace mode,
 search with highlighting, ex commands, mappings, undo/redo grouping,
-non-Latin layouts. 712 of the 716 tests in codemirror-vim's own suite pass.
+non-Latin layouts, folding. 714 of the 716 tests in codemirror-vim's own suite pass.
 
 Planned:
 
