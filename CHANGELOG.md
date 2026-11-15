@@ -13,6 +13,9 @@
   selection change inside it: `:%norm A;` on 20,000 lines 7.6 s → 2.1 s.
 - Fold labels ("⋯ N lines") are placed only near the visible text and
   follow scrolling: `zM` on 20,000 lines in the view 0.8 s → 48 ms.
+- The engine reports edits, selection, mode and scrolling to the host once
+  per key instead of after every operation vim.js runs inside it (`:normal`,
+  macros, counts): `:%norm A;` on 20,000 lines 2.1 s → 1.5 s in the view.
 
 ## 0.2.1 — 2026-11-15
 

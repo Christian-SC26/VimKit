@@ -865,6 +865,14 @@
     } finally {
       this.$ending = false;
     }
+    if (this.$keyDepth) {
+      // Inside one key vim.js can run thousands of operations (:normal over
+      // every line, a macro, a count). The host gets their sum when the key
+      // ends (see handleKeyEvent): edits, selection, status and one scroll.
+      // Questions to the host (geometry) still send pending edits first.
+      if (pendingScroll || scroll) this.$keyScroll = { pending: pendingScroll, cursor: scroll };
+      return;
+    }
     this.$flush();
     if (pendingScroll) this.$scrollNow(pendingScroll.offset, pendingScroll.margin);
     if (scroll) this.scrollIntoView();
@@ -1880,6 +1888,9 @@
   // ---- state reporting ---------------------------------------------------------------------
 
   proto.$emitState = function () {
+    // Mode changes inside one key (:normal toggles insert mode on every line)
+    // are reported once, by the $flush that ends the key.
+    if (this.$keyDepth) return;
     var vim = this.state.vim, d = this.dialog, cursor = this.$primary().head;
     if (vim && vim.visualMode && vim.sel && vim.sel.head) cursor = this.indexFromPos(vim.sel.head);
     var state = {
@@ -1909,6 +1920,20 @@
   // Returns true when vim consumed the key; false means the native view should
   // handle it (in insert mode that inserts text).
   proto.handleKeyEvent = function (e) {
+    this.$keyDepth = (this.$keyDepth || 0) + 1;
+    try {
+      return this.$handleKeyEvent(e);
+    } finally {
+      if (--this.$keyDepth === 0) {
+        var scroll = this.$keyScroll;
+        this.$keyScroll = null;
+        this.$flush();
+        if (scroll && scroll.pending) this.$scrollNow(scroll.pending.offset, scroll.pending.margin);
+        if (scroll && scroll.cursor) this.scrollIntoView();
+      }
+    }
+  };
+  proto.$handleKeyEvent = function (e) {
     if (this.dialog && this.dialog.input) {
       this.$dialogKey(e);
       this.$emitState();
