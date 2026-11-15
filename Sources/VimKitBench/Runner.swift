@@ -60,6 +60,13 @@ struct BenchMeta: Codable, Sendable {
     var baseFootprintMB: Double
     var nanojoulesPerCycle: Double?
     var averagePowerW: Double?
+    /// Sequential number in `Benchmarks/history`.
+    var runNumber: Int?
+    /// Language the measured change was written in (JS, Swift, Goose, …).
+    var language: String?
+    /// What changed since the previous run.
+    var note: String?
+    var filter: String?
 }
 
 struct BenchRun: Codable, Sendable {
@@ -75,6 +82,9 @@ struct BenchOptions {
     var outDirectory = "bench-results"
     var baseline: String?
     var openReport = true
+    var language = "JS"
+    var note: String?
+    var historyDirectory = "Benchmarks/history"
 
     static func parse(_ arguments: [String]) -> BenchOptions {
         var options = BenchOptions()
@@ -90,6 +100,9 @@ struct BenchOptions {
             case "--out": options.outDirectory = iterator.next() ?? options.outDirectory
             case "--baseline": options.baseline = iterator.next()
             case "--no-open": options.openReport = false
+            case "--lang": options.language = iterator.next() ?? options.language
+            case "--note": options.note = iterator.next()
+            case "--history": options.historyDirectory = iterator.next() ?? options.historyDirectory
             case "-h", "--help":
                 print("""
                 VimKitBench — стенд производительности VimKit.
@@ -101,7 +114,11 @@ struct BenchOptions {
                   --filter текст          только операции, в имени или категории которых есть текст
                   --quick                 вчетверо меньше повторов
                   --out каталог           куда писать JSON и отчёт (bench-results)
-                  --baseline файл.json    с чем сравнивать (по умолчанию — предыдущий прогон)
+                  --lang язык             на каком языке сделано изменение: JS, Swift, Goose… (JS)
+                  --note "текст"          что изменилось с прошлого прогона
+                  --history каталог       история прогонов с номерами (Benchmarks/history)
+                  --baseline файл.json    с чем сравнивать (по умолчанию — предыдущий
+                                          прогон из истории с той же сборкой и режимом)
                   --no-open               не открывать отчёт в браузере
                 """)
                 exit(0)

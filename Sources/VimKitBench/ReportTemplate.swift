@@ -55,6 +55,13 @@ details summary{cursor:pointer;font-weight:600}
 dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 16px;margin:12px 0 0}
 dt{color:var(--muted)}
 dd{margin:0}
+.hist{display:flex;align-items:flex-end;gap:10px;overflow-x:auto;min-height:220px;padding-top:24px}
+.hist .col{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;min-width:56px;flex:0 0 auto;height:200px}
+.hist .bar{width:34px;border-radius:4px 4px 0 0;min-height:2px}
+.hist .v{font-size:12px;font-variant-numeric:tabular-nums;margin-bottom:4px;white-space:nowrap}
+.hist .n{font-size:12px;color:var(--muted);margin-top:6px;text-align:center;line-height:1.2}
+.chip{display:inline-block;padding:1px 7px;border-radius:999px;font-size:12px;color:#fff}
+td.note{white-space:normal;min-width:220px;max-width:420px}
 @media (max-width:640px){.chart .row{grid-template-columns:100px 1fr 72px}.kpi .value{font-size:19px}}
 </style>
 </head>
@@ -75,6 +82,11 @@ dd{margin:0}
   <h2>Жизненный цикл и память на экземпляр</h2>
   <div class="tablewrap"><table id="lifecycle"></table></div>
 
+  <h2>История прогонов</h2>
+  <div class="controls" style="position:static;border:0;padding:0 0 10px"><select id="histOp"></select><span class="muted" id="histScope"></span></div>
+  <div class="card hist" id="historyChart"></div>
+  <div class="tablewrap" style="margin-top:12px"><table id="historyTable"></table></div>
+
   <details>
     <summary>Как читать метрики</summary>
     <dl>
@@ -89,12 +101,17 @@ dd{margin:0}
       <dt>&gt;16,7 мс</dt><dd>Сколько повторов не уложились в кадр 60 Гц.</dd>
       <dt>Рост</dt><dd>Во сколько раз медиана на самом большом документе больше, чем на самом маленьком. Красный — операция дорожает почти пропорционально размеру файла.</dd>
       <dt>Доля UI</dt><dd>Какая часть времени операции во вьюхе приходится не на движок (TextKit, раскладка, отрисовка, синхронизация).</dd>
-      <dt>Δ</dt><dd>Изменение медианы относительно базового прогона. Разница меньше 10% или 0,05 мс считается шумом.</dd>
+      <dt>Δ</dt><dd>Изменение медианы относительно базового прогона. Цветом выделено, только если время изменилось на 10%+ (и 0,05 мс+), а инструкции — на 5%+ в ту же сторону. Если инструкции те же, разница во времени — это частота процессора, нагрев или фоновая нагрузка, а не код (подсказка у значения показывает Δ инструкций).</dd>
     </dl>
   </details>
 </main>
 <script>
 const DATA = __BENCH_DATA__;
+const HISTORY = DATA.history || [];
+const LANG_COLORS = ['#3366dd', '#d9822b', '#1f9e6b', '#9b51e0', '#cc3b30', '#0f9fb5', '#a1761a'];
+const LANGS = [...new Set(HISTORY.map(h => h.meta.language || '—'))];
+const langColor = l => LANG_COLORS[Math.max(0, LANGS.indexOf(l || '—')) % LANG_COLORS.length];
+const chip = l => `<span class="chip" style="background:${langColor(l)}">${esc(l || '—')}</span>`;
 const RUN = DATA.run, META = RUN.meta, ALL = RUN.results;
 const keyOf = r => [r.level, r.lines, r.category, r.name].join('|');
 const BASE = new Map(((DATA.baseline && DATA.baseline.results) || []).map(r => [keyOf(r), r]));
@@ -151,21 +168,26 @@ function uiShare(r) {
 function delta(r) {
   const b = BASE.get(keyOf(r));
   if (!b || b.wallMedian <= 0) return null;
-  return {d: (r.wallMedian - b.wallMedian) / b.wallMedian, abs: r.wallMedian - b.wallMedian};
+  const di = b.instructionsPerOp > 0 ? (r.instructionsPerOp - b.instructionsPerOp) / b.instructionsPerOp : 0;
+  const d = (r.wallMedian - b.wallMedian) / b.wallMedian;
+  // Time alone moves with CPU frequency and load; count it only when instructions moved the same way.
+  const noise = Math.abs(d) < 0.1 || Math.abs(r.wallMedian - b.wallMedian) < 0.05 || Math.abs(di) < 0.05 || Math.sign(di) !== Math.sign(d);
+  return {d: d, di: di, abs: r.wallMedian - b.wallMedian, noise: noise};
 }
 
 function renderMeta() {
   const m = META;
-  const parts = [m.chip, `${m.performanceCores}P + ${m.efficiencyCores}E ядер`, `${nf(m.memoryGB, 0)} ГБ`, m.os, `сборка ${m.build}`, `коммит ${m.commit}`,
+  if (m.runNumber) document.querySelector('h1').innerHTML = `VimKit · стенд производительности · прогон №${m.runNumber} ${chip(m.language)}`;
+  const parts = [m.note ? 'Изменение: ' + m.note : null, m.chip, `${m.performanceCores}P + ${m.efficiencyCores}E ядер`, `${nf(m.memoryGB, 0)} ГБ`, m.os, `сборка ${m.build}`, `коммит ${m.commit}`,
     new Date(m.date).toLocaleString('ru-RU'), `${nf(m.durationSeconds, 0)} с на прогон`, `footprint на старте ${nf(m.baseFootprintMB, 0)} МБ`];
   if (m.averagePowerW) parts.push(`средняя мощность процесса ${nf(m.averagePowerW, 1)} Вт, ${nf(m.nanojoulesPerCycle * 1000, 1)} пДж на такт`);
   if (m.quick) parts.push('быстрый режим (--quick)');
-  document.getElementById('meta').innerHTML = parts.map(p => `<span>${esc(p)}</span>`).join('');
+  document.getElementById('meta').innerHTML = parts.filter(Boolean).map(p => `<span>${esc(p)}</span>`).join('');
   const banners = [];
   if (m.build !== 'release') banners.push('Отладочная сборка: цифры завышены в разы. Для реальных замеров: <code>swift run -c release VimKitBench</code>.');
   const broken = ALL.filter(r => !r.inSync || r.jsErrors > 0);
   if (broken.length) banners.push(`Проблемы в ${broken.length} замерах: ` + broken.slice(0, 6).map(r => `${esc(r.name)} (${LEVEL_LABEL[r.level]}, ${r.lines}: ${!r.inSync ? 'вьюха и движок разошлись' : 'ошибок JS ' + r.jsErrors})`).join('; '));
-  if (DATA.baseline) banners.push(`Δ — сравнение с прогоном ${new Date(DATA.baseline.meta.date).toLocaleString('ru-RU')} (коммит ${esc(DATA.baseline.meta.commit)}).`);
+  if (DATA.baseline) banners.push(`Δ — сравнение с прогоном ${DATA.baseline.meta.runNumber ? '№' + DATA.baseline.meta.runNumber + ', ' : ''}${new Date(DATA.baseline.meta.date).toLocaleString('ru-RU')} (коммит ${esc(DATA.baseline.meta.commit)}).`);
   document.getElementById('banners').innerHTML = banners.map((b, i) => `<div class="banner" style="${i === banners.length - 1 && DATA.baseline ? 'border-color:var(--border);color:var(--muted)' : ''}">${b}</div>`).join('');
 }
 
@@ -205,9 +227,9 @@ function renderKpis() {
     kpi('Пик памяти', mb(peak.peakMB) + ' МБ', esc(peak.name)) +
     kpi('Энергия на операцию', energy > 0 ? uj(energy) : '—', energy > 0 ? 'медиана' : 'ОС не сообщает энергию');
   if (DATA.baseline) {
-    const ds = rows.map(delta).filter(d => d && Math.abs(d.abs) > 0.05);
+    const ds = rows.map(delta).filter(d => d && !d.noise);
     const worse = ds.filter(d => d.d > 0.1).length, better = ds.filter(d => d.d < -0.1).length;
-    html += kpi('Против прошлого прогона', `<span class="bad">${worse}</span> / <span class="good">${better}</span>`, 'медленнее / быстрее на 10%+');
+    html += kpi('Против прошлого прогона', `<span class="bad">${worse}</span> / <span class="good">${better}</span>`, 'медленнее / быстрее (время и инструкции)');
   }
   document.getElementById('kpis').innerHTML = html;
 }
@@ -254,7 +276,7 @@ const COLUMNS = [
   {k: 'hitches', l: '>16,7 мс', v: r => r.hitches, f: r => r.hitches ? `<span class="bad">${r.hitches}/${r.repeats}</span>` : `<span class="muted">0/${r.repeats}</span>`},
   {k: 'growth', l: 'Рост', v: r => growth(r) || 0, f: r => { const g = growth(r); if (g == null) return '—'; const ratio = SIZES[SIZES.length - 1] / SIZES[0]; return `<span class="${g > ratio * 0.3 ? 'bad' : g > 3 ? 'warn' : ''}">×${nf(g, 1)}</span>`; }},
   {k: 'ui', l: 'Доля UI', v: r => uiShare(r) || 0, f: r => { const u = uiShare(r); return u == null ? '—' : nf(u * 100, 0) + '%'; }},
-  {k: 'delta', l: 'Δ', v: r => (delta(r) || {d: 0}).d, f: r => { const d = delta(r); if (!d) return '—'; const noise = Math.abs(d.d) < 0.1 || Math.abs(d.abs) < 0.05; return `<span class="${noise ? 'muted' : d.d > 0 ? 'bad' : 'good'}">${d.d > 0 ? '+' : ''}${nf(d.d * 100, 0)}%</span>`; }},
+  {k: 'delta', l: 'Δ', v: r => (delta(r) || {d: 0}).d, f: r => { const d = delta(r); if (!d) return '—'; return `<span class="${d.noise ? 'muted' : d.d > 0 ? 'bad' : 'good'}" title="инструкции ${d.di > 0 ? '+' : ''}${nf(d.di * 100, 0)}%${d.noise ? ' — шум' : ''}">${d.d > 0 ? '+' : ''}${nf(d.d * 100, 0)}%</span>`; }},
   {k: 'ok', l: 'Проверка', v: r => (r.inSync && !r.jsErrors) ? 1 : 0, f: r => !r.inSync ? '<span class="bad">рассинхрон</span>' : r.jsErrors ? `<span class="bad" title="${esc(r.firstError || '')}">JS: ${r.jsErrors}</span>` : '<span class="good">✓</span>'},
 ];
 
@@ -283,7 +305,39 @@ function renderLifecycle() {
       `<td>${!r.inSync ? '<span class="bad">рассинхрон</span>' : r.jsErrors ? `<span class="bad">JS: ${r.jsErrors}</span>` : '<span class="good">✓</span>'}</td></tr>`).join('') + '</tbody>';
 }
 
-function update() { save(); renderControls(); renderKpis(); renderChart(); renderTable(); }
+function renderHistory() {
+  const chart = document.getElementById('historyChart'), table = document.getElementById('historyTable'), sel = document.getElementById('histOp');
+  if (!HISTORY.length) { chart.innerHTML = '<span class="muted">Нет истории.</span>'; return; }
+  const prefix = state.level + '|' + state.lines + '|';
+  const names = current().map(r => r.category + '|' + r.name);
+  if (!names.includes(state.histOp)) {
+    // Default: the operation that was slowest in the first run.
+    const first = HISTORY[0].values, ranked = names.slice().sort((a, b) => ((first[prefix + b] || [0])[0]) - ((first[prefix + a] || [0])[0]));
+    state.histOp = ranked[0];
+  }
+  sel.innerHTML = names.slice().sort((a, b) => a.split('|')[1].localeCompare(b.split('|')[1])).map(n => `<option value="${esc(n)}" ${n === state.histOp ? 'selected' : ''}>${esc(n.split('|')[1])} — ${esc(n.split('|')[0])}</option>`).join('');
+  sel.onchange = e => { state.histOp = e.target.value; update(); };
+  document.getElementById('histScope').textContent = `медиана, ${LEVEL_LABEL[state.level].toLowerCase()}, ${nf(state.lines, 0)} строк · цвет — язык изменения`;
+  const key = prefix + state.histOp;
+  const points = HISTORY.map(h => ({meta: h.meta, v: h.values[key] ? h.values[key][0] : null}));
+  const max = Math.max(...points.map(p => p.v || 0), 1e-9);
+  chart.innerHTML = points.map(p => `<div class="col" title="${esc(p.meta.note || '')}"><div class="v">${p.v == null ? '—' : ms(p.v) + ' мс'}</div>` +
+    `<div class="bar" style="height:${p.v == null ? 0 : Math.max(1, p.v / max * 150).toFixed(1)}px;background:${langColor(p.meta.language)}"></div>` +
+    `<div class="n">№${p.meta.runNumber || '?'}<br>${esc(p.meta.language || '—')}</div></div>`).join('');
+  table.innerHTML = '<thead><tr><th class="l">№</th><th class="l">Дата</th><th class="l">Язык</th><th class="l">Что изменилось</th><th class="l">Коммит</th><th class="l">Сборка, режим</th><th>Выбранная операция, мс</th><th>Δ к предыдущему</th><th>Медиана операций, мс</th></tr></thead><tbody>' +
+    HISTORY.slice().reverse().map((h, i, arr) => {
+      const v = h.values[key] ? h.values[key][0] : null, prev = arr[i + 1] && arr[i + 1].values[key] ? arr[i + 1].values[key][0] : null;
+      const d = v != null && prev ? (v - prev) / prev : null;
+      const all = Object.entries(h.values).filter(([k]) => k.startsWith(prefix) && !k.startsWith(prefix + 'Стенд|') && !k.startsWith(prefix + 'Жизненный цикл|')).map(([, x]) => x[0]).sort((a, b) => a - b);
+      const med = all.length ? all[all.length >> 1] : null;
+      const mode = [h.meta.build, h.meta.quick ? '--quick' : null, h.meta.filter ? '--filter ' + h.meta.filter : null].filter(Boolean).join(', ');
+      return `<tr><td class="l">${h.meta.runNumber || '—'}</td><td class="l">${new Date(h.meta.date).toLocaleString('ru-RU')}</td><td class="l">${chip(h.meta.language)}</td>` +
+        `<td class="l note">${esc(h.meta.note || '—')}</td><td class="l"><code>${esc(h.meta.commit)}</code></td><td class="l muted">${esc(mode)}</td>` +
+        `<td>${v == null ? '—' : ms(v)}</td><td>${d == null ? '—' : `<span class="${Math.abs(d) < 0.1 ? 'muted' : d > 0 ? 'bad' : 'good'}">${d > 0 ? '+' : ''}${nf(d * 100, 0)}%</span>`}</td><td>${med == null ? '—' : ms(med)}</td></tr>`;
+    }).join('') + '</tbody>';
+}
+
+function update() { save(); renderControls(); renderKpis(); renderChart(); renderTable(); renderHistory(); }
 renderMeta(); renderLifecycle(); update();
 </script>
 </body>

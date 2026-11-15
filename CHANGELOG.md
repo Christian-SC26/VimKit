@@ -5,6 +5,10 @@
 - `VimKitBench`: a performance stand (`swift run -c release VimKitBench`)
   that measures time, CPU, instructions, energy and memory for every
   operation at the engine and view levels and writes an HTML report.
+  Runs are numbered and kept in `Benchmarks/history` with the language and
+  a note; `Benchmarks/HISTORY.md` follows the costliest operations.
+- `zM` on large files: blocks are found in one pass and folds are added in
+  bulk. 20,000 lines: 8.5 s → 43 ms in the engine.
 
 ## 0.2.1 — 2026-11-15
 

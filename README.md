@@ -183,8 +183,11 @@ levels: `VimEngine` alone and `VimTextView` in a window including layout
 and drawing. For each it records wall time (median, p95, max, first),
 main-thread and process CPU, instructions, IPC, estimated energy, peak
 and retained memory footprint, malloc growth and frames over 16.7 ms.
-Results go to `bench-results/` as JSON and an HTML report that compares
-with the previous run.
+Every run is numbered and kept in `Benchmarks/history/run-NNN.json`, with
+the language the measured change was written in and a note
+(`--lang Swift --note "…"`); `Benchmarks/HISTORY.md` tracks the most
+expensive operations run by run. The HTML report (`bench-results/report.html`)
+compares with the previous run and charts any operation across the history.
 
 How this is kept fast:
 

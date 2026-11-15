@@ -31,6 +31,8 @@ func shell(_ arguments: [String]) -> String? {
         .trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
+var history = try History(directory: URL(fileURLWithPath: options.historyDirectory, isDirectory: true))
+let pastRuns = history.loadAll()
 let formatter = ISO8601DateFormatter()
 let version = ProcessInfo.processInfo.operatingSystemVersion
 var commit = shell(["git", "rev-parse", "--short", "HEAD"]) ?? "—"
@@ -51,7 +53,11 @@ let meta = BenchMeta(
     durationSeconds: Date().timeIntervalSince(started),
     baseFootprintMB: baseFootprint,
     nanojoulesPerCycle: runner.nanojoulesPerCycle,
-    averagePowerW: runner.averagePowerW
+    averagePowerW: runner.averagePowerW,
+    runNumber: history.nextNumber,
+    language: options.language,
+    note: options.note,
+    filter: options.filter
 )
 let run = BenchRun(meta: meta, results: runner.results)
 
@@ -61,41 +67,28 @@ let fileManager = FileManager.default
 let outURL = URL(fileURLWithPath: options.outDirectory, isDirectory: true)
 try fileManager.createDirectory(at: outURL, withIntermediateDirectories: true)
 
-let stampFormatter = DateFormatter()
-stampFormatter.dateFormat = "yyyyMMdd-HHmmss"
-let runName = "run-\(stampFormatter.string(from: started)).json"
-
-// The baseline: an explicit file, or the newest earlier run with the same build configuration.
-let decoder = JSONDecoder()
+// The baseline: an explicit file, or the newest earlier run in the history
+// with the same build configuration and the same quick/full mode.
 var baseline: BenchRun?
 if let path = options.baseline {
-    baseline = (try? Data(contentsOf: URL(fileURLWithPath: path))).flatMap { try? decoder.decode(BenchRun.self, from: $0) }
+    baseline = (try? Data(contentsOf: URL(fileURLWithPath: path))).flatMap { try? JSONDecoder().decode(BenchRun.self, from: $0) }
     if baseline == nil { FileHandle.standardError.write(Data("Не удалось прочитать базовый прогон \(path)\n".utf8)) }
 } else {
-    let earlier = ((try? fileManager.contentsOfDirectory(atPath: outURL.path)) ?? [])
-        .filter { $0.hasPrefix("run-") && $0.hasSuffix(".json") && $0 < runName }
-        .sorted(by: >)
-    for name in earlier {
-        if let data = try? Data(contentsOf: outURL.appendingPathComponent(name)),
-           let candidate = try? decoder.decode(BenchRun.self, from: data),
-           candidate.meta.build == buildConfiguration {
-            baseline = candidate
-            break
-        }
-    }
+    baseline = pastRuns.last { $0.meta.build == meta.build && $0.meta.quick == meta.quick }
 }
 
-let encoder = JSONEncoder()
-encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-let runData = try encoder.encode(run)
-try runData.write(to: outURL.appendingPathComponent(runName))
+try history.save(run)
+let allRuns = pastRuns + [run]
+let historyMarkdown = history.directory.deletingLastPathComponent().appendingPathComponent("HISTORY.md")
+try writeHistoryMarkdown(allRuns, to: historyMarkdown)
 
 struct ReportData: Encodable {
     var run: BenchRun
     var baseline: BenchRun?
+    var history: [HistoryPoint]
 }
-let compact = JSONEncoder()
-let reportJSON = String(decoding: try compact.encode(ReportData(run: run, baseline: baseline)), as: UTF8.self)
+let reportJSON = String(decoding: try JSONEncoder().encode(ReportData(run: run, baseline: baseline, history: allRuns.map(HistoryPoint.init))),
+                        as: UTF8.self)
     .replacingOccurrences(of: "</", with: "<\\/")
 let reportURL = outURL.appendingPathComponent("report.html")
 try reportTemplate.replacingOccurrences(of: "__BENCH_DATA__", with: reportJSON)
@@ -103,7 +96,7 @@ try reportTemplate.replacingOccurrences(of: "__BENCH_DATA__", with: reportJSON)
 
 // MARK: Console summary
 
-print("\nVimKitBench · \(meta.chip) · \(meta.os) · \(meta.build) · \(meta.commit) · \(String(format: "%.0f", meta.durationSeconds)) с")
+print("\nVimKitBench · прогон №\(meta.runNumber ?? 0) · \(meta.language ?? "—") · \(meta.chip) · \(meta.os) · \(meta.build) · \(meta.commit) · \(String(format: "%.0f", meta.durationSeconds)) с")
 let slow = run.results.filter { !$0.lifecycle && $0.wallP95 > 1000.0 / 60 }
 if !slow.isEmpty {
     print("Не укладываются в кадр 16,7 мс (p95):")
@@ -123,15 +116,18 @@ if let baseline {
         guard let old = previous["\(result.level)|\(result.lines)|\(result.category)|\(result.name)"],
               old.wallMedian > 0, result.wallMedian - old.wallMedian > 0.05 else { return nil }
         let change = result.wallMedian / old.wallMedian - 1
-        return change > 0.15 ? (result, change) : nil
+        // Same instructions but more time is the machine (frequency, thermals, load), not the code.
+        let instructions = old.instructionsPerOp > 0 ? result.instructionsPerOp / old.instructionsPerOp - 1 : 0
+        return change > 0.15 && instructions > 0.05 ? (result, change) : nil
     }
-    print("Сравнение с прогоном \(baseline.meta.date) (\(baseline.meta.commit)): медленнее на 15%+ — \(regressions.count)")
+    print("Сравнение с прогоном №\(baseline.meta.runNumber ?? 0), \(baseline.meta.date) (\(baseline.meta.commit)): медленнее на 15%+ и больше инструкций — \(regressions.count)")
     for (result, change) in regressions.sorted(by: { $0.1 > $1.1 }).prefix(15) {
         print(String(format: "  %-6@ %6d  %-40@ %+6.0f%%", result.level.rawValue as NSString, result.lines,
                      result.name as NSString, change * 100))
     }
 }
-print("JSON:  \(outURL.appendingPathComponent(runName).path)")
+print("JSON:    \(history.files.last!.url.path)")
+print("История: \(historyMarkdown.path)")
 print("Отчёт: \(reportURL.path)")
 if options.openReport { NSWorkspace.shared.open(reportURL) }
 #else

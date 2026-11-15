@@ -1288,14 +1288,35 @@
       var f = this.$folds[i], l = this.$foldLines(f);
       if (l.header == header && l.last == last) { f.closed = closed; this.$foldChanged(); return f; }
     }
+    var fold = this.$newFold(header, last, closed);
+    this.$foldChanged();
+    return fold;
+  };
+  proto.$newFold = function (header, last, closed) {
     var fold = {
       head: new Marker(this, this.indexFromPos(new Pos(header, this.getLine(header).length)), 1),
       tail: new Marker(this, this.indexFromPos(new Pos(last, this.getLine(last).length)), -1),
       closed: closed
     };
     this.$folds.push(fold);
-    this.$foldChanged();
     return fold;
+  };
+  // $addFold for many blocks at once: existing folds are looked up in a map
+  // instead of a scan of all folds per block (zM made thousands of folds
+  // and scanned them all for each one).
+  proto.$addFolds = function (blocks, closed) {
+    if (!blocks.length) return;
+    var existing = new Map();
+    for (var i = 0; i < this.$folds.length; i++) {
+      var l = this.$foldLines(this.$folds[i]);
+      existing.set(l.header + ":" + l.last, this.$folds[i]);
+    }
+    for (var j = 0; j < blocks.length; j++) {
+      var b = blocks[j], key = b.header + ":" + b.last, f = existing.get(key);
+      if (f) f.closed = closed;
+      else existing.set(key, this.$newFold(b.header, b.last, closed));
+    }
+    this.$foldChanged();
   };
   proto.$removeFold = function (f) {
     var i = this.$folds.indexOf(f);
@@ -1402,6 +1423,33 @@
     if (i <= lastLine && this.$indentOf(i) == indent && isClosingLine(this.getLine(i))) last = i;
     return last > header ? { header: header, last: last } : null;
   };
+  // Every block $blockFrom would find, for all lines, in one pass: a stack of
+  // headers still open. A non-blank line closes every header indented at
+  // least as deep; their blocks end at the previous non-blank line, or on
+  // this line when it is a closing bracket at the header's indentation.
+  proto.$allBlocks = function () {
+    var blocks = [], stack = [], prev = -1, lastLine = this.lastLine();
+    for (var i = 0; i <= lastLine; i++) {
+      var d = this.$indentOf(i);
+      if (d == null) continue;
+      var closing = null;
+      while (stack.length && stack[stack.length - 1].indent >= d) {
+        var h = stack.pop(), last = prev;
+        if (h.indent == d) {
+          if (closing == null) closing = isClosingLine(this.getLine(i));
+          if (closing) last = i;
+        }
+        if (last > h.line) blocks.push({ header: h.line, last: last });
+      }
+      stack.push({ line: i, indent: d });
+      prev = i;
+    }
+    while (stack.length) {
+      var open = stack.pop();
+      if (prev > open.line) blocks.push({ header: open.line, last: prev });
+    }
+    return blocks.sort(function (a, b) { return a.header - b.header; });
+  };
   // The innermost block that contains `line` without starting on it.
   proto.$blockAround = function (line) {
     var indent = this.$indentOf(line), lastLine = this.lastLine();
@@ -1452,10 +1500,7 @@
         break;
       case "closeEverything":
         this.$folds.forEach(function (f) { f.closed = true; });
-        for (var n = 0; n <= this.lastLine(); n++) {
-          var b = this.$blockFrom(n);
-          if (b) this.$addFold(b.header, b.last, true);
-        }
+        this.$addFolds(this.$allBlocks(), true);
         var top = this.$hiddenLines().filter(function (s) { return s[0] <= line && line <= s[1]; })[0];
         if (top) this.setCursor(new Pos(top[0] - 1, 0));
         break;
