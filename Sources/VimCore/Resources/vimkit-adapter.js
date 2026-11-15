@@ -493,6 +493,13 @@
     redo: function (cm) { cm.redo(); },
     cursorCharLeft: function (cm) { cm.moveH(-1, "char"); },
     newlineAndIndent: function (cm) {
+      // At the end of a closed fold's header (`o` on a fold), open the line after the fold.
+      if (cm.$folds.length) cm.sel.ranges.forEach(function (r) {
+        if (r.anchor != r.head) return;
+        var p = cm.doc.posFromIndex(r.head), end = cm.$foldEnd(p.line);
+        if (end > p.line && p.ch == cm.getLine(p.line).length)
+          r.anchor = r.head = cm.indexFromPos(new Pos(end, cm.getLine(end).length));
+      });
       cm.$replaceRanges(function (from, to) {
         var line = cm.doc.posFromIndex(from).line;
         var indent = /^[ \t]*/.exec(cm.getLine(line))[0];
@@ -813,8 +820,8 @@
     if (start !== Infinity) this.$setSel([{ anchor: start, head: start }], 0);
     this.$afterDispatch();
   };
-  proto.undo = function () { this.$runHistory(this.history.done, this.history.undone, true); };
-  proto.redo = function () { this.$runHistory(this.history.undone, this.history.done, false); };
+  proto.undo = function () { this.$undoing = true; this.$runHistory(this.history.done, this.history.undone, true); };
+  proto.redo = function () { this.$undoing = true; this.$runHistory(this.history.undone, this.history.done, false); };
 
   // ---- operations ------------------------------------------------------------
 
@@ -1483,9 +1490,30 @@
     return this.$folds.some(function (f) { return f.closed && cm.$foldLines(f).header == line; });
   };
   // A cursor that ends up in hidden lines (search, G, marks...) opens the folds around it.
+  // Jumps that leave folds closed (Vim's 'foldopen' default leaves out
+  // "jump" and vertical moves); the cursor goes to the fold's first line.
+  var KEEPS_FOLDS_CLOSED = {
+    moveToLineOrEdgeOfDocument: 1, moveByScroll: 1, moveByPage: 1, moveByLines: 1, moveByDisplayLines: 1,
+    moveToTopLine: 1, moveToMiddleLine: 1, moveToBottomLine: 1
+  };
+  // A cursor that ends up in hidden lines (search, marks, %, undo...) opens
+  // the folds around it; after a jump (G, <C-d>, H...) it moves onto the fold.
   proto.$revealCursor = function () {
-    var line = this.posFromIndex(this.$primary().head).line;
+    var undoing = this.$undoing;
+    this.$undoing = false;
+    var pos = this.posFromIndex(this.$primary().head), line = pos.line;
     if (!this.$isHidden(line)) return;
+    var vim = this.state.vim, motion = vim && vim.lastMotion;
+    if (!undoing && vim && !vim.visualMode && !vim.insertMode && this.sel.ranges.length == 1 &&
+        motion && KEEPS_FOLDS_CLOSED[motion.name]) {
+      var span = this.$hiddenLines().filter(function (s) { return s[0] <= line && line <= s[1]; })[0];
+      var header = span[0] - 1, text = this.getLine(header);
+      var ch = Math.min(pos.ch, Math.max(0, text.length - 1));
+      if (motion.name == "moveToLineOrEdgeOfDocument") ch = text.search(/\S|$/);
+      var offset = this.indexFromPos(new Pos(header, ch));
+      this.$setSel([{ anchor: offset, head: offset }], 0);
+      return;
+    }
     this.$foldsAt(line).forEach(function (a) { if (a.header < line) a.fold.closed = false; });
     this.$foldChanged();
   };

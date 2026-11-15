@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- `o` on a closed fold opens the line after the fold.
+- Jumps into a closed fold (`G`, `gg`, `<C-d>`, `H`/`M`/`L`, `3G`) keep it
+  closed and put the cursor on it; search, marks, `%` and undo open it, as
+  with Vim's default `'foldopen'`.
+
 ## 0.2.0 — 2026-11-15
 
 - Folding: `zc`, `zo`, `za`, `zM`, `zR`, `zf{motion}`, `zd`, `zE`. Blocks are

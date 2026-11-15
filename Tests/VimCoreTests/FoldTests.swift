@@ -107,6 +107,36 @@ struct FoldTests {
         #expect(vim.text.contains("func a"))
     }
 
+    @Test func jumpsLeaveFoldsClosed() {
+        let vim = engine()
+        vim.feed("zMG")
+        #expect(hiddenLines(vim) == [[1, 5], [8, 9]], "G keeps the last fold closed")
+        #expect(vim.cursor == VimPosition(line: 7, column: 0), "and puts the cursor on it")
+        vim.feed("gg")
+        #expect(vim.cursor.line == 0)
+        vim.feed("3G")
+        #expect(vim.cursor.line == 0, "3G lands in the first fold: its header")
+        #expect(hiddenLines(vim) == [[1, 5], [8, 9]])
+    }
+
+    @Test func undoOpensTheFoldItChanges() {
+        let vim = engine()
+        vim.feed("3Gxggzc")
+        #expect(hiddenLines(vim) == [[1, 5]])
+        vim.feed("u")
+        #expect(vim.text.contains("    one"))
+        #expect(vim.folds.isEmpty)
+    }
+
+    @Test func openLineBelowAClosedFold() {
+        let vim = engine()
+        vim.feed("zcoX<Esc>")
+        #expect(vim.text.contains("  two\n}\nX\n\nfunc b"), "o opens the line after the fold")
+        #expect(hiddenLines(vim) == [[1, 5]], "and the fold stays closed")
+        vim.feed("ggzRjjzcjOY<Esc>")
+        #expect(vim.text.contains("  }\n  Y\n  two"), "O below a fold opens the line after it")
+    }
+
     @Test func searchOpensTheFoldItLandsIn() {
         let vim = engine()
         vim.feed("zM/three<CR>")

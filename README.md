@@ -209,7 +209,10 @@ folds any lines, and `zd` / `zE` delete folds. Blocks are found by
 indentation; a closing bracket line at the header's indentation belongs to
 the block, so `func f() {` … `}` folds to its header line. `j` and `k` step
 over closed folds, and linewise operators (`dd`, `yy`, `>>`, `cc`, `3dd`)
-take a closed fold as one line, and so does `V`. A search or jump into a fold opens it.
+take a closed fold as one line, and so does `V`; `o` on a fold opens the
+line after it. A search, mark, `%` or undo that lands in a fold opens it;
+jumps (`G`, `gg`, `<C-d>`, `H`/`M`/`L`) keep it closed and put the cursor
+on it, as with Vim's default `'foldopen'`.
 Edits inside a fold keep it; an edit across its first or last line deletes
 it.
 
