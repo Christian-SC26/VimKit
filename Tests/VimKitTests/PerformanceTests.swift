@@ -15,6 +15,8 @@ import Testing
 @Suite(.serialized)
 struct PerformanceTests {
     static let printsTable = ProcessInfo.processInfo.environment["VIMKIT_BENCH"] != nil
+    /// Multiplies every limit; CI sets it for slower virtual machines.
+    static let limitScale = ProcessInfo.processInfo.environment["VIMKIT_PERF_SCALE"].flatMap(Double.init) ?? 1
 
     struct Scenario {
         let name: String
@@ -68,7 +70,7 @@ struct PerformanceTests {
             let median = samples[samples.count / 2]
             let worst = samples.last ?? 0
             rows.append((scenario.name, median, worst))
-            #expect(median < scenario.limit, "\(scenario.name): \(median) ms per repeat")
+            #expect(median < scenario.limit * Self.limitScale, "\(scenario.name): \(median) ms per repeat")
             #expect(editor.view.string == editor.view.vim.text, "\(scenario.name): view out of sync")
             editor.window.close()
         }

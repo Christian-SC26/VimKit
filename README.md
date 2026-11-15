@@ -28,12 +28,12 @@ struct ContentView: View {
 | Product | Platforms | What it is |
 |---|---|---|
 | `VimCore` | macOS 14+, iOS 17+ | `VimEngine`: the headless engine. Feed it keys, it edits text and tells a delegate. |
-| `VimKit` | macOS 14+ | `VimTextView` (an `NSTextView` subclass, TextKit 2), `VimEditor` and `VimStatusLine` for SwiftUI. Re-exports `VimCore`. |
+| `VimKit` | macOS 14+, iOS 17+ | `VimTextView` (an `NSTextView` subclass, TextKit 2), `VimUITextView` (a `UITextView` subclass, TextKit 2), and `VimEditor` and `VimStatusLine` for SwiftUI. Re-exports `VimCore`. |
 
 Add the package in Xcode (*File → Add Package Dependencies…*) or in `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/<owner>/VimKit.git", branch: "main")
+.package(url: "https://github.com/Christian-SC26/VimKit.git", from: "0.1.0")
 ```
 
 ## Usage
@@ -132,6 +132,22 @@ Copy `packages/codemirror-vim-core/vim.js` from a newer codemirror-vim
 release over `Sources/VimCore/Resources/vim.js`. Copy that release's
 `test/vim_test.js` over `Tests/VimCoreTests/Resources/vim_test.js`, then run
 `swift test`.
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on every push and pull request:
+
+* macOS: `swift build` and `swift test`. Performance limits are multiplied
+  by `VIMKIT_PERF_SCALE=5` because CI machines are slower.
+* iOS: the package tests on an iPad simulator, and a build of the iOS demo.
+
+To run the iOS tests locally:
+
+```sh
+xcodebuild test -scheme VimKit-Package \
+  -destination 'platform=iOS Simulator,name=<an iPad simulator>' \
+  -test-timeouts-enabled YES
+```
 
 ### Upstream test suite
 
