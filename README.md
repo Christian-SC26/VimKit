@@ -242,6 +242,13 @@ content storage delegate, which they set when it is free) and show
 "⋯ N lines" after the header. Other hosts read `VimEngine.folds` in
 `vimEngineFoldsDidChange(_:)`.
 
+Blocks are found natively: `VimRuntime.foldKernel` picks Swift (the
+default), Goose (`Kernels/fold_blocks.goose`, compiled to C in
+`Sources/VimGooseKernels`; regenerate with `Kernels/regenerate.sh`) or the
+adapter's JavaScript. All three find the same blocks; on 20,000 lines
+Swift takes 0.62 ms, Goose 0.67 ms and JavaScript 13 ms
+(`VimEngine.foldBlocks()`, VimKitBench runs 8 and 9).
+
 ## Demo
 
 macOS:

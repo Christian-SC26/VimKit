@@ -16,6 +16,11 @@
 - The engine reports edits, selection, mode and scrolling to the host once
   per key instead of after every operation vim.js runs inside it (`:normal`,
   macros, counts): `:%norm A;` on 20,000 lines 2.1 s → 1.5 s in the view.
+- Fold blocks are found natively: `VimRuntime.foldKernel` (`.swift` by
+  default, `.goose` or `.javascript`) and `VimEngine.foldBlocks()`. The
+  Goose kernel is `Kernels/fold_blocks.goose`, compiled to C in the new
+  `VimGooseKernels` target. 20,000 lines: 13 ms in JavaScript, 0.67 ms in
+  Goose, 0.62 ms in Swift; `zM` in the view 48 → 36 ms.
 
 ## 0.2.1 — 2026-11-15
 

@@ -91,7 +91,8 @@ extension BenchMeta {
         if let filter { parts.append("--filter \(filter)") }
         if sizes != [1_000, 20_000] { parts.append("--sizes " + sizes.map(String.init).joined(separator: ",")) }
         if levels != [.engine, .view] { parts.append("--levels " + levels.map(\.rawValue).joined(separator: ",")) }
-        if let foldKernel, foldKernel != "javascript" { parts.append("--fold-kernel \(foldKernel)") }
+        // Runs before 8 have no kernel: they used JavaScript, then the only one.
+        if let foldKernel, foldKernel != "swift" { parts.append("--fold-kernel \(foldKernel)") }
         return parts.isEmpty ? "полный" : parts.joined(separator: " ")
     }
 }

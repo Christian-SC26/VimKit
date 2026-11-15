@@ -94,7 +94,7 @@ struct BenchOptions {
     var language = "JS"
     var note: String?
     var historyDirectory = "Benchmarks/history"
-    var foldKernel: VimFoldKernel = .javascript
+    var foldKernel: VimFoldKernel = .swift
 
     static func parse(_ arguments: [String]) -> BenchOptions {
         var options = BenchOptions()
@@ -134,7 +134,7 @@ struct BenchOptions {
                   --lang язык             на каком языке сделано изменение: JS, Swift, Goose… (JS)
                   --note "текст"          что изменилось с прошлого прогона
                   --history каталог       история прогонов с номерами (Benchmarks/history)
-                  --fold-kernel ядро      js, swift или goose: чем zM ищет блоки (js)
+                  --fold-kernel ядро      js, swift или goose: чем zM ищет блоки (swift)
                   --baseline файл.json    с чем сравнивать (по умолчанию — предыдущий
                                           прогон из истории с той же сборкой и режимом)
                   --no-open               не открывать отчёт в браузере

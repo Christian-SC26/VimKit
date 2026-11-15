@@ -80,6 +80,10 @@ CodeMirror 5. Подробности по API — в [README](README.md), ист
   максимум, первый запуск), CPU, инструкции, энергия (оценка), пик и
   удержанная память, кадры дольше 16,7 мс. Результат — JSON и HTML-отчёт
   в `bench-results/` со сравнением с прошлым прогоном.
+- Поиск блоков свёрток вынесен из JavaScript в нативный код и сравнён на
+  стенде на двух языках (прогоны 8 и 9, 20 000 строк): Swift 0,62 мс,
+  Goose 0,67 мс, JavaScript 13 мс. По умолчанию — Swift
+  (`VimRuntime.foldKernel`), Goose остаётся выбором (`.goose`).
 - CI на GitHub Actions: `swift build` и `swift test` на macOS, тесты на
   симуляторе iPad, сборка iPad-демо.
 - Демо: `swift run VimKitDemo` на macOS и `Demo/VimKitDemo.swiftpm` для
