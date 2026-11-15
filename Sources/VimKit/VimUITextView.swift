@@ -315,7 +315,10 @@ open class VimUITextView: UITextView {
     open override func layoutSubviews() {
         super.layoutSubviews()
         if subviews.last !== blockCursor { bringSubviewToFront(blockCursor) }
-        if !foldLabels.isEmpty, bounds.width != foldLabelWidth { updateFoldLabels() }
+        // Scrolling lays out the view too: add labels for folds that came near.
+        if !vim.folds.isEmpty || !foldLabels.isEmpty, bounds.width != foldLabelWidth || !foldLabelArea.contains(bounds) {
+            updateFoldLabels()
+        }
         updateBlockCursor()
     }
 
@@ -457,10 +460,23 @@ open class VimUITextView: UITextView {
         updateBlockCursor()
     }
 
-    /// A "⋯ N lines" label after each closed fold's header line.
+    /// The area whose folds have labels; scrolling inside it changes nothing.
+    private var foldLabelArea: CGRect = .null
+
+    /// A "⋯ N lines" label after each closed fold's header line, for folds
+    /// within a screen of the visible text. A file can have thousands of
+    /// folds, and placing a label lays out the text up to it.
     private func updateFoldLabels() {
-        let folds = isVimEnabled ? vim.folds : []
+        let all = isVimEnabled ? vim.folds : []
         foldLabelWidth = bounds.width
+        var folds: [VimFold] = []
+        foldLabelArea = .null
+        if !all.isEmpty {
+            let area = bounds.insetBy(dx: 0, dy: -bounds.height)
+            foldLabelArea = area
+            folds = Array(all.withHeaders(between: characterIndex(at: CGPoint(x: area.minX, y: max(area.minY, 0))),
+                                          and: characterIndex(at: CGPoint(x: area.maxX, y: area.maxY))))
+        }
         while foldLabels.count > folds.count { foldLabels.removeLast().removeFromSuperview() }
         while foldLabels.count < folds.count {
             let label = UILabel()

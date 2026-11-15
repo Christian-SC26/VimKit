@@ -125,6 +125,8 @@ const LEVEL_LABEL = {engine: 'Движок', view: 'Вьюха'};
 const FRAME = 1000 / 60;
 const INDEX = new Map(ALL.map(r => [keyOf(r), r]));
 
+// Share of wall time spent off the CPU, over [wall, cpu] pairs.
+function waitShare(pairs) { let w = 0, c = 0; pairs.forEach(([a, b]) => { w += a; c += Math.min(a, b); }); return w > 0 ? 1 - c / w : 0; }
 const nf = (v, d) => v.toLocaleString('ru-RU', {maximumFractionDigits: d, minimumFractionDigits: d});
 function ms(v) { if (v == null) return '—'; const a = Math.abs(v); return nf(v, a >= 100 ? 0 : a >= 10 ? 1 : a >= 1 ? 2 : 3); }
 function count(v) { if (!v) return '0'; if (v >= 1e9) return nf(v / 1e9, 2) + ' млрд'; if (v >= 1e6) return nf(v / 1e6, 2) + ' млн'; if (v >= 1e3) return nf(v / 1e3, 1) + ' тыс'; return nf(v, 0); }
@@ -185,8 +187,8 @@ function renderMeta() {
   if (m.quick) parts.push('быстрый режим (--quick)');
   document.getElementById('meta').innerHTML = parts.filter(Boolean).map(p => `<span>${esc(p)}</span>`).join('');
   const banners = [];
-  const noisy = m.loadAverageStart != null && (Math.max(m.loadAverageStart, m.loadAverageEnd || 0) > Math.max(m.performanceCores, 1) * 0.5 || (m.pageins || 0) > 200);
-  if (noisy) banners.push(`Во время прогона машину грузило что-то ещё: load average ${nf(m.loadAverageStart, 1)} → ${nf(m.loadAverageEnd || 0, 1)}, подкачка ${m.pageins || 0} страниц, ${nf(m.effectiveGHz || 0, 2)} ГГц. Стенное время завышено — сравнивайте CPU и инструкции.`);
+  const ws = waitShare(OPS.map(r => [r.wallMedian, r.cpuMedian]));
+  if (ws > 0.08 || (m.pageins || 0) > 5000) banners.push(`Во время прогона машину грузило что-то ещё: ${nf(ws * 100, 0)}% стенного времени операции ждали, а не считали${m.loadAverageStart != null ? `; load average ${nf(m.loadAverageStart, 1)} → ${nf(m.loadAverageEnd || 0, 1)}, подкачка ${m.pageins || 0} страниц, ${nf(m.effectiveGHz || 0, 2)} ГГц` : ''}. Стенное время завышено — сравнивайте CPU и инструкции.`);
   if (m.build !== 'release') banners.push('Отладочная сборка: цифры завышены в разы. Для реальных замеров: <code>swift run -c release VimKitBench</code>.');
   const broken = ALL.filter(r => !r.inSync || r.jsErrors > 0);
   if (broken.length) banners.push(`Проблемы в ${broken.length} замерах: ` + broken.slice(0, 6).map(r => `${esc(r.name)} (${LEVEL_LABEL[r.level]}, ${r.lines}: ${!r.inSync ? 'вьюха и движок разошлись' : 'ошибок JS ' + r.jsErrors})`).join('; '));
@@ -329,7 +331,9 @@ function renderHistory() {
   const key = prefix + state.histOp;
   const pick = h => h.values[key] && h.values[key][mi] != null ? h.values[key][mi] : null;
   const points = HISTORY.map(h => ({meta: h.meta, v: pick(h)}));
-  const isNoisy = m => m.loadAverageStart != null && (Math.max(m.loadAverageStart, m.loadAverageEnd || 0) > Math.max(m.performanceCores, 1) * 0.5 || (m.pageins || 0) > 200);
+  const histWait = h => waitShare(Object.entries(h.values).filter(([k]) => !k.includes('|Жизненный цикл|')).map(([, x]) => [x[0], x[1]]));
+  HISTORY.forEach(h => { h.meta.$wait = histWait(h); });
+  const isNoisy = m => m.$wait > 0.08 || (m.pageins || 0) > 5000;
   const max = Math.max(...points.map(p => p.v || 0), 1e-9);
   chart.innerHTML = points.map(p => `<div class="col" title="${esc(p.meta.note || '')}"><div class="v">${p.v == null ? '—' : fmtH(p.v)}</div>` +
     `<div class="bar" style="height:${p.v == null ? 0 : Math.max(1, p.v / max * 150).toFixed(1)}px;background:${langColor(p.meta.language)};${isNoisy(p.meta) ? 'opacity:.45' : ''}"></div>` +
@@ -343,7 +347,7 @@ function renderHistory() {
       const mode = [h.meta.build, h.meta.quick ? '--quick' : null, h.meta.filter ? '--filter ' + h.meta.filter : null].filter(Boolean).join(', ');
       return `<tr><td class="l">${h.meta.runNumber || '—'}</td><td class="l">${new Date(h.meta.date).toLocaleString('ru-RU')}</td><td class="l">${chip(h.meta.language)}</td>` +
         `<td class="l note">${esc(h.meta.note || '—')}</td><td class="l"><code>${esc(h.meta.commit)}</code></td><td class="l muted">${esc(mode)}</td>` +
-        `<td class="l ${isNoisy(h.meta) ? 'warn' : 'muted'}">${h.meta.loadAverageStart == null ? '—' : (isNoisy(h.meta) ? '⚠︎ ' : '') + 'load ' + nf(h.meta.loadAverageStart, 1) + '→' + nf(h.meta.loadAverageEnd || 0, 1) + ', подкачка ' + (h.meta.pageins || 0) + (h.meta.effectiveGHz ? ', ' + nf(h.meta.effectiveGHz, 2) + ' ГГц' : '')}</td>` +
+        `<td class="l ${isNoisy(h.meta) ? 'warn' : 'muted'}">${(isNoisy(h.meta) ? '⚠︎ ' : '') + 'ожидание ' + nf(h.meta.$wait * 100, 0) + '%'}${h.meta.loadAverageStart == null ? '' : ', load ' + nf(h.meta.loadAverageStart, 1) + '→' + nf(h.meta.loadAverageEnd || 0, 1) + ', подкачка ' + (h.meta.pageins || 0) + (h.meta.effectiveGHz ? ', ' + nf(h.meta.effectiveGHz, 2) + ' ГГц' : '')}</td>` +
         `<td>${v == null ? '—' : fmtH(v)}</td><td>${d == null ? '—' : `<span class="${Math.abs(d) < 0.1 ? 'muted' : d > 0 ? 'bad' : 'good'}">${d > 0 ? '+' : ''}${nf(d * 100, 0)}%</span>`}</td><td>${med == null ? '—' : ms(med)}</td></tr>`;
     }).join('') + '</tbody>';
 }

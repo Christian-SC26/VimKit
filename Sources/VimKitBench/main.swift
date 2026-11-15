@@ -101,8 +101,8 @@ try reportTemplate.replacingOccurrences(of: "__BENCH_DATA__", with: reportJSON)
 
 // MARK: Console summary
 
-if meta.isNoisy {
-    print("⚠︎ Во время прогона была внешняя нагрузка (\(meta.loadSummary)). Стенное время ненадёжно — сравнивайте CPU и инструкции.")
+if run.isNoisy {
+    print("⚠︎ Во время прогона была внешняя нагрузка (\(run.loadSummary)). Стенное время ненадёжно — сравнивайте CPU и инструкции.")
 }
 
 print("\nVimKitBench · прогон №\(meta.runNumber ?? 0) · \(meta.language ?? "—") · \(meta.chip) · \(meta.os) · \(meta.build) · \(meta.commit) · \(String(format: "%.0f", meta.durationSeconds)) с")

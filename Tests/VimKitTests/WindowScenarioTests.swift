@@ -215,6 +215,24 @@ struct WindowScenarioTests {
         #expect(inSync(editor))
     }
 
+    /// Labels are placed only near the visible text (each one lays out the
+    /// text up to it), and scrolling brings in the labels of folds that come near.
+    @Test func foldLabelsFollowTheVisibleText() throws {
+        let text = (0..<2_000).map { "func f\($0)() {\n    body\($0)\n}" }.joined(separator: "\n")
+        let editor = EditorWindow(text: text)
+        editor.type("zM")
+        #expect(editor.view.vim.folds.count == 2_000)
+        let atTop = editor.view.foldPlaceholders
+        #expect(!atTop.isEmpty)
+        #expect(atTop.count < 200, "labels for \(atTop.count) of 2000 folds")
+        editor.type("G")
+        let visible = editor.visibleRect
+        let atEnd = editor.view.foldPlaceholders
+        #expect(atEnd.contains { visible.intersects($0.frame) }, "a label on screen after scrolling to the end")
+        #expect(atEnd.count < 200)
+        #expect(inSync(editor))
+    }
+
     @Test func foldsInALargeFile() throws {
         let editor = EditorWindow(text: sampleCode(lines: 3_000).replacingOccurrences(of: "    let value9 ", with: "func f() {\n    let value9 "))
         let start = ContinuousClock.now

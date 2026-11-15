@@ -211,7 +211,27 @@ open class VimTextView: NSTextView {
 
     open override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        observeScrolling()
         updateBlockCursor()
+    }
+
+    private var clipObserver: (any NSObjectProtocol)?
+
+    /// Fold labels exist only near the visible text, so scrolling past them adds more.
+    private func observeScrolling() {
+        if let clipObserver { NotificationCenter.default.removeObserver(clipObserver) }
+        clipObserver = nil
+        guard let clip = enclosingScrollView?.contentView else { return }
+        clip.postsBoundsChangedNotifications = true
+        clipObserver = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification, object: clip, queue: nil
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, !self.vim.folds.isEmpty || !self.foldLabels.isEmpty,
+                      !self.foldLabelArea.contains(self.visibleRect) else { return }
+                self.updateFoldLabels()
+            }
+        }
     }
 
     private var showsBlockCursor: Bool {
@@ -356,10 +376,24 @@ open class VimTextView: NSTextView {
         updateBlockCursor()
     }
 
-    /// A "⋯ N lines" label after each closed fold's header line.
+    /// The area whose folds have labels; scrolling inside it changes nothing.
+    private var foldLabelArea: CGRect = .null
+
+    /// A "⋯ N lines" label after each closed fold's header line, for folds
+    /// within a screen of the visible text. A file can have thousands of
+    /// folds, and placing a label lays out the text up to it.
     private func updateFoldLabels() {
-        let folds = isVimEnabled && textKit2 != nil ? vim.folds : []
+        let all = isVimEnabled && textKit2 != nil ? vim.folds : []
         foldLabelWidth = bounds.width
+        var folds: [VimFold] = []
+        foldLabelArea = .null
+        if !all.isEmpty {
+            let visible = visibleRect.isEmpty ? bounds : visibleRect
+            let area = visible.insetBy(dx: 0, dy: -visible.height).intersection(bounds)
+            foldLabelArea = area
+            folds = Array(all.withHeaders(between: characterIndex(at: CGPoint(x: area.minX, y: area.minY)),
+                                          and: characterIndex(at: CGPoint(x: area.maxX, y: area.maxY))))
+        }
         while foldLabels.count > folds.count { foldLabels.removeLast().removeFromSuperview() }
         while foldLabels.count < folds.count {
             let label = FoldLabel()

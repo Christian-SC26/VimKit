@@ -9,6 +9,10 @@
   a note; `Benchmarks/HISTORY.md` follows the costliest operations.
 - `zM` on large files: blocks are found in one pass and folds are added in
   bulk. 20,000 lines: 8.5 s → 43 ms in the engine.
+- The block cursor is updated once per key instead of on every mode and
+  selection change inside it: `:%norm A;` on 20,000 lines 7.6 s → 2.1 s.
+- Fold labels ("⋯ N lines") are placed only near the visible text and
+  follow scrolling: `zM` on 20,000 lines in the view 0.8 s → 48 ms.
 
 ## 0.2.1 — 2026-11-15
 
