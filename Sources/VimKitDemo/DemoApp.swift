@@ -35,12 +35,14 @@ struct DemoView: View {
     @State private var document = Document.sample
     @State private var fileName: String?
     @State private var vimEnabled = true
+    @State private var lineNumbers = VimLineNumbers.hybrid
     @State private var savedAt: Date?
     @State private var subtitle = DemoView.describe("Sample", DemoView.sample)
 
     var body: some View {
         VimEditor(text: $text)
             .vimEnabled(vimEnabled)
+            .vimLineNumbers(lineNumbers)
             .vimOnSave { savedAt = .now }
             .navigationSubtitle(subtitle)
             .toolbar {
@@ -52,6 +54,12 @@ struct DemoView: View {
                     ForEach(Document.allCases) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented)
+                Picker("Line numbers", selection: $lineNumbers) {
+                    Text("No numbers").tag(VimLineNumbers.off)
+                    Text("Numbers").tag(VimLineNumbers.absolute)
+                    Text("Relative").tag(VimLineNumbers.relative)
+                    Text("Hybrid").tag(VimLineNumbers.hybrid)
+                }
                 Toggle("Vim", isOn: $vimEnabled)
                     .toggleStyle(.switch)
             }

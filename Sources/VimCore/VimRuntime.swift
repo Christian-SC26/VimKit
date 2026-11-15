@@ -112,6 +112,33 @@ public final class VimRuntime {
         api.invokeMethod("defineEx", withArguments: [name, prefix ?? name])
     }
 
+    // MARK: Registers
+
+    /// The register `name` (`"`, `0`–`9`, `a`–`z`, `-`, `.`, `:`, `/`, `+`,
+    /// `*`, `%`, `#`, `=`), or nil when it is empty or not a register. The
+    /// registers are shared by all editors of this runtime, as in Vim.
+    public func register(_ name: Character) -> VimRegister? {
+        guard let value = api.invokeMethod("getRegister", withArguments: [String(name)]),
+              value.isObject, let text = value.objectForKeyedSubscript("text")?.toString() else { return nil }
+        let kind = value.objectForKeyedSubscript("kind")?.toString()
+        return VimRegister(text: text, kind: kind == "l" ? .linewise : kind == "b" ? .blockwise : .characterwise)
+    }
+
+    /// Sets (or with nil, empties) a writable register, e.g. to restore
+    /// registers saved by ``registerNames`` and ``register(_:)`` between
+    /// launches, as Neovim's shada file does. Returns false for read-only
+    /// registers (`.`, `:`, `%`, `#`, `=`) and unknown names.
+    @discardableResult
+    public func setRegister(_ name: Character, to value: VimRegister?) -> Bool {
+        let kind = value.map { $0.kind == .linewise ? "l" : $0.kind == .blockwise ? "b" : "c" } ?? "c"
+        return api.invokeMethod("setRegister", withArguments: [String(name), value?.text ?? NSNull(), kind])?.toBool() ?? false
+    }
+
+    /// Names of the registers that hold text, in `:registers` order.
+    public var registerNames: [Character] {
+        Array(api.invokeMethod("registerNames", withArguments: [])?.toString() ?? "")
+    }
+
     static func stripColon(_ command: String) -> String {
         var command = command.trimmingCharacters(in: .whitespaces)
         while command.hasPrefix(":") { command.removeFirst() }

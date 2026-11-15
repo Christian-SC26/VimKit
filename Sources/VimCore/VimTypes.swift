@@ -179,6 +179,26 @@ public enum VimMapMode: String, Sendable {
     case normal, insert, visual
 }
 
+/// The contents of a register.
+public struct VimRegister: Sendable, Hashable, Codable {
+    public enum Kind: String, Sendable, Hashable, Codable {
+        /// Pasted inside a line, like `yiw`.
+        case characterwise
+        /// Whole lines, like `yy`; the text ends with a newline.
+        case linewise
+        /// A rectangle, like a `<C-v>` selection.
+        case blockwise
+    }
+
+    public var text: String
+    public var kind: Kind
+
+    public init(text: String, kind: Kind = .characterwise) {
+        self.text = text
+        self.kind = kind
+    }
+}
+
 public enum VimLogLevel: Int, Sendable, Comparable {
     case debug, info, warning, error
 

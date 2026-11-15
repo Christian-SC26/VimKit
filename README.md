@@ -105,6 +105,41 @@ Registers, mappings and options are shared by all editors in a runtime,
 like in Vim. The `+` and `*` registers use the system pasteboard; set
 `runtime.clipboard` to change that.
 
+### Registers
+
+All of Vim's registers work: `""`, `"0`–`"9` (including the Vi rule that
+`d%`, `d}`, `dn`… also go to `"1`, and `"1p..` pasting `"1`, `"2`, `"3`),
+`"a`–`"z` and appending `"A`–`"Z`, `"-`, `"_`, the read-only `".`, `":`,
+`"/`, `"%` and `"#` (the host's `fileName` and `alternateFileName`),
+`"+` / `"*` (the system clipboard; `:set clipboard=unnamed` makes it the
+default register) and `"=`, an expression (`"=6*7<CR>p`,
+`<C-r>=strftime('%F')<CR>` in insert mode). `:registers` / `:display` list
+them as Vim does, `:let @a = 'text'`, `:let @/ = 'pattern'` and `:echo`
+take expressions, and `<C-r>{register}`, `<C-r><C-w>` work in the `:` and
+`/` prompts. Visual `P` keeps the register.
+
+Macros are text, as in Vim: `"qp` pastes `A;<Esc>j`, and after editing it
+`"qy$` and `@q` run the new version. A macro replays its keys as typed
+(searches, ex commands and `.` inside it work) and stops when a key fails,
+so `999@q` ends at the last line.
+
+```swift
+vim.fileName = url.path                                  // "% and expand('%')
+runtime.setRegister("a", to: VimRegister(text: "kept\n", kind: .linewise))
+let saved = runtime.registerNames.compactMap { name in   // persist like shada
+    runtime.register(name).map { (name, $0) }
+}
+```
+
+### Line numbers (macOS)
+
+`:set number`, `:set relativenumber` (both: the cursor line's own number
+on the left, as in Vim) and `:set numberwidth` show a number column next
+to the text; it stays in place when the text scrolls sideways. Relative
+numbers count a closed fold as one line, like `j`. Clicking a number moves
+to its line, dragging selects lines. The app sets it with
+`VimEditor(...).vimLineNumbers(.hybrid)` or `textView.lineNumbers`.
+
 ### Keyboard layouts
 
 Commands follow the physical key, so `hjkl`, `dd`, `ciw` work on Russian,

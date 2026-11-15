@@ -7,3 +7,10 @@ vim_dat_noop
 # Browser-only: <C-c> in visual mode lets the browser's copy event fire. On macOS
 # copy is Cmd-C, and VimKit treats <C-c> like Vim does (as <Esc>).
 vim_<C-c>copy
+
+# :registers shows a register on one line, with newlines as ^J (as Vim does);
+# codemirror-vim prints them as line breaks.
+vim_yank_visual_block
+vim_yank_append_line_to_line_register
+vim_yank_append_line_to_word_register
+vim_yank_append_word_to_line_register

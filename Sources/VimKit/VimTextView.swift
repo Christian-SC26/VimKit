@@ -62,7 +62,7 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
         didSet { needsDisplay = true }
     }
     public var backgroundColor: NSColor = .textBackgroundColor {
-        didSet { needsDisplay = true }
+        didSet { needsDisplay = true; lineNumberRuler?.needsDisplay = true }
     }
     public var drawsBackground = true {
         didSet { needsDisplay = true }
@@ -98,6 +98,24 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
 
     /// Gap between the inset and the text on the left and right.
     private let padding: CGFloat = 5
+
+    /// The line number column; `:set number` and `:set relativenumber`
+    /// change it too.
+    public var lineNumbers: VimLineNumbers {
+        get { lineNumberMode }
+        set { if newValue != lineNumberMode { setLineNumbers(newValue, updatingEngine: true) } }
+    }
+    public var lineNumberColor: NSColor = .secondaryLabelColor {
+        didSet { lineNumberRuler?.needsDisplay = true }
+    }
+    /// The cursor line's number.
+    public var currentLineNumberColor: NSColor = .labelColor {
+        didSet { lineNumberRuler?.needsDisplay = true }
+    }
+    var lineNumberMode: VimLineNumbers = .off
+    var lineNumberRuler: VimLineNumberRuler?
+    var numberedCursorLine = -1
+    private var clipBoundsObserver: (any NSObjectProtocol)?
 
     private var syncSuppression = 0
     private var folds: [VimFold] = []
@@ -215,6 +233,7 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
             selectedRanges = selectedRanges.map { clamp($0, to: length) }
             if let marked = markedTextRange, marked.upperBound > length { markedTextRange = nil }
             updateFrameSize()
+            lineNumbersDidChange()
         }
         coloredLines = [:]
         needsDisplay = true
@@ -342,17 +361,21 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
         updateFrameSize()
         needsDisplay = true
         updateCursor()
+        lineNumbersDidChange()
     }
 
     /// Fills the clip view's width (or the widest line) and the text's exact height.
-    private func updateFrameSize() {
+    /// The clip view's insets (find bar on top, line numbers on the left)
+    /// cover part of it.
+    func updateFrameSize() {
         guard let clip = superview as? NSClipView else { return }
         let size = clip.bounds.size
         let origin = textOrigin
-        let width = wrapsLines ? size.width
-            : max(size.width, ceil(layout.widestLineWidth() + 2 * origin.x + layout.spaceWidth))
-        layout.setWrapWidth(wrapWidth(for: width))
         let insets = clip.contentInsets
+        let visibleWidth = max(0, size.width - insets.left - insets.right)
+        let width = wrapsLines ? visibleWidth
+            : max(visibleWidth, ceil(layout.widestLineWidth() + 2 * origin.x + layout.spaceWidth))
+        layout.setWrapWidth(wrapWidth(for: width))
         let height = max(size.height - insets.top - insets.bottom, ceil(layout.height + 2 * textContainerInset.height))
         let frameSize = NSSize(width: width, height: height)
         if frame.size != frameSize { super.setFrameSize(frameSize) }
@@ -371,8 +394,16 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
     open override func viewDidMoveToSuperview() {
         super.viewDidMoveToSuperview()
         if let clipObserver { NotificationCenter.default.removeObserver(clipObserver) }
+        if let clipBoundsObserver { NotificationCenter.default.removeObserver(clipBoundsObserver) }
         clipObserver = nil
+        clipBoundsObserver = nil
         guard let clip = superview as? NSClipView else { return }
+        // The number column follows vertical scrolling.
+        clipBoundsObserver = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification, object: clip, queue: nil
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.lineNumberRuler?.needsDisplay = true }
+        }
         clip.postsFrameChangedNotifications = true
         clipObserver = NotificationCenter.default.addObserver(
             forName: NSView.frameDidChangeNotification, object: clip, queue: nil
@@ -383,6 +414,7 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
             MainActor.assumeIsolated { self?.findBarVisibilityChanged(before: change.isPrior) }
         }
         updateFrameSize()
+        updateLineNumberRuler()
     }
 
     /// The find bar covers the top of the clip view and insets it: keep the
@@ -433,8 +465,12 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
         let insets = clip.contentInsets
         let top = max(rect.minY, clip.bounds.minY + insets.top)
         let bottom = min(rect.maxY, clip.bounds.maxY - insets.bottom)
+        let left = max(rect.minX, clip.bounds.minX + insets.left)
+        let right = min(rect.maxX, clip.bounds.maxX - insets.right)
         rect.origin.y = top
         rect.size.height = max(0, bottom - top)
+        rect.origin.x = left
+        rect.size.width = max(0, right - left)
         return rect
     }
 
@@ -494,6 +530,7 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
             cursorNeedsUpdate = true
             return
         }
+        lineNumbersCursorMoved()
         let previous = [blockCursorFrame, caretFrame].compactMap { $0 }
         blockCursorFrame = nil
         invertedCursorRange = nil
@@ -727,6 +764,7 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
         updateFrameSize()
         needsDisplay = true
         updateCursor()
+        lineNumbersDidChange()
     }
 
     private var placeholderFont: NSFont {
@@ -1221,8 +1259,9 @@ extension VimTextView: VimEngineDelegate {
         guard let scrollView = enclosingScrollView else { return }
         let clip = scrollView.contentView
         var origin = clip.bounds.origin
-        if let x { origin.x = x }
-        // `y` is the top of the visible text, below the find bar if it is shown.
+        // `x` and `y` are the left and top of the visible text, right of the
+        // line numbers and below the find bar.
+        if let x { origin.x = x - clip.contentInsets.left }
         if let y { origin.y = y - clip.contentInsets.top }
         let constrained = clip.constrainBoundsRect(NSRect(origin: origin, size: clip.bounds.size))
         clip.scroll(to: constrained.origin)
@@ -1250,6 +1289,10 @@ extension VimTextView: VimEngineDelegate {
     public func vimEngineLineHeight(_ engine: VimEngine) -> CGFloat? { lineHeight }
 
     public func vimEngineFoldsDidChange(_ engine: VimEngine) { applyFolds() }
+
+    public func vimEngine(_ engine: VimEngine, didChangeOption name: String) {
+        if ["number", "relativenumber", "numberwidth"].contains(name) { lineNumberOptionsChanged() }
+    }
 
     public func vimEngine(_ engine: VimEngine, tokenTypeAt offset: Int) -> VimTokenType? {
         if let tokenTypeProvider { return tokenTypeProvider(offset) }

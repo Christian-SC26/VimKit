@@ -27,6 +27,9 @@ public struct VimEditor: View {
         public var textInset: CGSize
         /// Underline misspelled words (macOS; on iOS the system spell checker).
         public var checksSpelling: Bool
+        /// The line number column (macOS). `:set nu` / `:set rnu` change it
+        /// in the view; a new value here sets it again.
+        public var lineNumbers: VimLineNumbers
         public var onSave: (() -> Void)?
         public var onExCommand: ((VimExCommand) -> Void)?
 
@@ -43,6 +46,7 @@ public struct VimEditor: View {
             showsStatusLine: Bool = true,
             textInset: CGSize = CGSize(width: 6, height: 8),
             checksSpelling: Bool = false,
+            lineNumbers: VimLineNumbers = .off,
             onSave: (() -> Void)? = nil,
             onExCommand: ((VimExCommand) -> Void)? = nil
         ) {
@@ -52,6 +56,7 @@ public struct VimEditor: View {
             self.showsStatusLine = showsStatusLine
             self.textInset = textInset
             self.checksSpelling = checksSpelling
+            self.lineNumbers = lineNumbers
             self.onSave = onSave
             self.onExCommand = onExCommand
         }
@@ -83,6 +88,13 @@ public struct VimEditor: View {
     public func vimEnabled(_ enabled: Bool) -> VimEditor {
         var copy = self
         copy.configuration.isVimEnabled = enabled
+        return copy
+    }
+
+    /// Shows line numbers (macOS), as `:set nu` / `:set rnu` would.
+    public func vimLineNumbers(_ mode: VimLineNumbers) -> VimEditor {
+        var copy = self
+        copy.configuration.lineNumbers = mode
         return copy
     }
 }
@@ -153,6 +165,8 @@ struct VimTextViewRepresentable: NSViewRepresentable {
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
         scrollView.documentView = textView
+        textView.lineNumbers = configuration.lineNumbers
+        context.coordinator.appliedLineNumbers = configuration.lineNumbers
         return scrollView
     }
 
@@ -166,11 +180,17 @@ struct VimTextViewRepresentable: NSViewRepresentable {
         if textView.isContinuousSpellCheckingEnabled != configuration.checksSpelling {
             textView.isContinuousSpellCheckingEnabled = configuration.checksSpelling
         }
+        // Only a changed setting: `:set nu` in the editor is not undone.
+        if context.coordinator.appliedLineNumbers != configuration.lineNumbers {
+            context.coordinator.appliedLineNumbers = configuration.lineNumbers
+            textView.lineNumbers = configuration.lineNumbers
+        }
     }
 
     @MainActor
     final class Coordinator {
         var parent: VimTextViewRepresentable
+        var appliedLineNumbers: VimLineNumbers = .off
 
         init(_ parent: VimTextViewRepresentable) {
             self.parent = parent

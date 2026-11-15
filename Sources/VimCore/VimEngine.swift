@@ -47,6 +47,9 @@ public protocol VimEngineDelegate: AnyObject {
     func vimEngine(_ engine: VimEngine, tokenTypeAt offset: Int) -> VimTokenType?
     /// Folds were closed, opened or moved; hide ``VimEngine/folds``.
     func vimEngineFoldsDidChange(_ engine: VimEngine)
+    /// `:set` changed an option the host shows: `number`, `relativenumber`
+    /// or `numberwidth`. Read it with ``VimEngine/vimOption(_:)``.
+    func vimEngine(_ engine: VimEngine, didChangeOption name: String)
 }
 
 public extension VimEngineDelegate {
@@ -68,6 +71,7 @@ public extension VimEngineDelegate {
     func vimEngine(_ engine: VimEngine, screenLineBoundaryFrom offset: Int, forward: Bool) -> Int? { nil }
     func vimEngineLineHeight(_ engine: VimEngine) -> CGFloat? { nil }
     func vimEngine(_ engine: VimEngine, tokenTypeAt offset: Int) -> VimTokenType? { nil }
+    func vimEngine(_ engine: VimEngine, didChangeOption name: String) {}
     func vimEngineFoldsDidChange(_ engine: VimEngine) {}
 }
 
@@ -219,6 +223,29 @@ public final class VimEngine {
         editor.invokeMethod("setOption", withArguments: [name, value])
     }
 
+    /// A vim option as `:set` sees it in this document: `number`,
+    /// `relativenumber`, `clipboard`, `ignorecase`, ... (nil if unknown).
+    public func vimOption(_ name: String) -> Any? {
+        guard let value = editor.invokeMethod("getVimOption", withArguments: [name]), !value.isNull, !value.isUndefined else { return nil }
+        return value.toObject()
+    }
+
+    /// Sets a vim option for this document only, like `:setlocal`.
+    @discardableResult
+    public func setVimOption(_ name: String, _ value: Any) -> Bool {
+        editor.invokeMethod("setVimOption", withArguments: [name, value])?.toBool() ?? false
+    }
+
+    /// The document's file name: the `%` register, `expand('%')`.
+    public var fileName: String? {
+        didSet { editor.setValue(fileName ?? NSNull(), forProperty: "$fileName") }
+    }
+
+    /// The alternate file name: the `#` register.
+    public var alternateFileName: String? {
+        didSet { editor.setValue(alternateFileName ?? NSNull(), forProperty: "$altFileName") }
+    }
+
     /// Defines an ex command, e.g. `defineEx("quit", prefix: "q") { _ in close() }`.
     /// Ex commands are global in vim; each engine keeps its own handler, and
     /// the delegate gets commands this engine has no handler for.
@@ -260,12 +287,13 @@ public final class VimEngine {
         let state: @convention(block) (String) -> Void = { [weak self] json in
             self?.updateStatus(json)
         }
-        let event: @convention(block) (String, String) -> Void = { [weak self] name, _ in
+        let event: @convention(block) (String, String) -> Void = { [weak self] name, payload in
             guard let self else { return }
             switch name {
             case "save": self.delegate?.vimEngineDidRequestSave(self)
             case "highlight": self.delegate?.vimEngineSearchHighlightDidChange(self)
             case "focus": self.delegate?.vimEngineDidRequestFocus(self)
+            case "option": self.delegate?.vimEngine(self, didChangeOption: payload)
             default: break
             }
         }

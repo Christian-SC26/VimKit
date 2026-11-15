@@ -60,7 +60,11 @@
     userAgent: "VimKit",
     clipboard: {
       writeText: function (text) { runtime.clipboardWrite(String(text)); return Promise.resolve(); },
-      readText: function () { return Promise.resolve(runtime.clipboardRead() || ""); }
+      // Resolves at once: vim.js pastes "+ in a then(), which must run within the key.
+      readText: function () {
+        var text = runtime.clipboardRead() || "";
+        return { then: function (fn) { fn(text); } };
+      }
     }
   };
 
@@ -2023,6 +2027,9 @@
   };
   proto.openNotification = function (template, options) {
     var cm = this, closed = false, timer = 0;
+    // A VimKit error stays over later messages of the same key ("%yy shows
+    // E354, not "1 line yanked").
+    if (this.$keyDepth && this.$keyError) return function () {};
     function close() {
       if (closed) return;
       closed = true;
@@ -2137,6 +2144,7 @@
       return this.$handleKeyEvent(e);
     } finally {
       if (--this.$keyDepth === 0) {
+        this.$keyError = false;
         var scroll = this.$keyScroll;
         this.$keyScroll = null;
         this.$flush();
@@ -2146,19 +2154,29 @@
     }
   };
   proto.$handleKeyEvent = function (e) {
+    activeCm = this;
+    currentEvent = e;
+    ensureRegisters();
     if (this.dialog && this.dialog.input) {
-      this.$dialogKey(e);
+      recordPromptKey(e);
+      if (!this.$promptRegisterKey(e)) this.$dialogKey(e);
       this.$emitState();
       return true;
     }
     var vim = this.state.vim;
     if (!vim) return false;
+    if (e.key == "." && !e.ctrlKey && !e.metaKey && !e.altKey && !vim.insertMode && !vim.visualMode
+        && !vim.inputState.operator && !vim.inputState.keyBuffer.length) {
+      bumpNumberedPaste(vim);
+    }
     // vim.js listens to keydown on the input field to record insert-mode
     // deletions for `.` repeat.
     var listeners = this.inputField._listeners.keydown;
     if (listeners) listeners.slice().forEach(function (fn) { fn(e); });
-    var key = Vim.vimKeyFromEvent(e, vim);
+    // Macro keys were recorded after 'langmap'; they replay as they are.
+    var key = Vim.vimKeyFromEvent(e, this.$macroKeys ? null : vim);
     if (!key) return false;
+    this.$recentKeys = ((this.$recentKeys || "") + key).slice(-16);
     if (key == "<Esc>" && !vim.insertMode && !vim.visualMode && this.searchQuery) {
       var searchState = vim.searchState_;
       if (searchState) {
@@ -2299,6 +2317,8 @@
     return flat;
   };
   proto.exec = function (command) {
+    activeCm = this;
+    ensureRegisters();
     Vim.handleEx(this, command);
     this.history.close();
     this.$flush();
@@ -2352,6 +2372,873 @@
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // Registers: Vim's full set on top of codemirror-vim's RegisterController.
+  //
+  // Added: "* and "+ read and write the system clipboard (and 'clipboard'
+  // unnamed/unnamedplus makes it the default register), "% and "# are the
+  // host's file names, "= evaluates an expression, "1 also takes deletes into
+  // a named register and the Vi motions (% ( ) ` / ? n N { }), read-only
+  // registers refuse writes, visual P keeps the register, "1p.. pastes "2, "3,
+  // :registers / :display in Vim's layout, :let @r = and :echo, <C-r> in the
+  // command line. Macros are plain key text ("qp shows A!<Esc>), so a pasted,
+  // edited and yanked back macro runs; replay stops at an error, or when j/k
+  // can't move, as in Vim.
+  // ---------------------------------------------------------------------------
+
+  var activeCm = null;       // the editor that handles the current key
+  var currentEvent = null;   // the key event being handled
+  var lastExpression = "";
+
+  function G() { return Vim.getVimGlobalState_(); }
+  function clipUnnamed() {
+    var v = Vim.getOption("clipboard");
+    return typeof v == "string" && /(^|,)unnamed(plus)?(,|$)/.test(v);
+  }
+  function showMessage(cm, text, isError, long) {
+    var pre = document.createElement("div");
+    pre.style.whiteSpace = "pre";
+    pre.setAttribute("class", "cm-vim-message");
+    if (isError) pre.style.color = "red";
+    pre.appendChild(document.createTextNode(long ? text + "\n" : text));
+    var node = pre;
+    if (long) {
+      node = document.createElement("div");
+      node.appendChild(pre);
+      var more = document.createElement("div");
+      more.appendChild(document.createTextNode("Press ENTER or type command to continue"));
+      node.appendChild(more);
+    }
+    if (cm.state.closeVimNotification) cm.state.closeVimNotification();
+    cm.state.closeVimNotification = cm.openNotification(node, { bottom: true, duration: long ? 0 : 15000 });
+    if (isError && cm.$keyDepth) cm.$keyError = true;
+  }
+
+  // The system clipboard as a register. Text written from vim remembers
+  // whether it was linewise; text from other apps is linewise when it ends
+  // with a newline, as in Vim.
+  var clipMemo = null;
+  function ClipboardRegister() {
+    this.keyBuffer = []; this.insertModeChanges = []; this.searchQueries = [];
+  }
+  ClipboardRegister.prototype.read = function () { return String(runtime.clipboardRead() || ""); };
+  ClipboardRegister.prototype.setText = function (text, linewise, blockwise) {
+    text = text || "";
+    clipMemo = { text: text, linewise: !!linewise, blockwise: !!blockwise };
+    runtime.clipboardWrite(text);
+  };
+  ClipboardRegister.prototype.pushText = function (text, linewise) {
+    var current = this.read(), was = this.linewise;
+    if (linewise && !was && current) current += "\n";
+    this.setText(current + text, was || linewise);
+  };
+  ClipboardRegister.prototype.clear = function () { this.setText(""); };
+  ClipboardRegister.prototype.pushInsertModeChanges = function () {};
+  ClipboardRegister.prototype.pushSearchQuery = function () {};
+  ClipboardRegister.prototype.toString = function () { return this.read(); };
+  Object.defineProperty(ClipboardRegister.prototype, "linewise", {
+    get: function () {
+      var text = this.read();
+      return clipMemo && clipMemo.text === text ? clipMemo.linewise : /\n$/.test(text);
+    },
+    set: function () {}
+  });
+  Object.defineProperty(ClipboardRegister.prototype, "blockwise", {
+    get: function () { return !!(clipMemo && clipMemo.text === this.read() && clipMemo.blockwise); },
+    set: function () {}
+  });
+  var clipboardRegister = new ClipboardRegister();
+
+  // A register whose text comes from a function: "%, "#, "=.
+  function ComputedRegister(get) {
+    this.get = get; this.keyBuffer = []; this.insertModeChanges = []; this.searchQueries = [];
+    this.linewise = false; this.blockwise = false;
+  }
+  ComputedRegister.prototype.setText = function () {};
+  ComputedRegister.prototype.pushText = function () {};
+  ComputedRegister.prototype.clear = function () {};
+  ComputedRegister.prototype.pushInsertModeChanges = function () {};
+  ComputedRegister.prototype.pushSearchQuery = function () {};
+  ComputedRegister.prototype.toString = function () { return String(this.get() || ""); };
+  var expressionResult = "";
+  var fileRegister = new ComputedRegister(function () { return activeCm && activeCm.$fileName; });
+  var altFileRegister = new ComputedRegister(function () { return activeCm && activeCm.$altFileName; });
+  var expressionRegister = new ComputedRegister(function () { return expressionResult; });
+
+  var readOnlyRegisters = ".:%#/=";
+  // d or c with these motions puts even a part of a line in "1 (Vi compatible).
+  var viMotionCommand = /[dc]\d*(?:[%()\/?nN{}]|`.)$/;
+
+  // Installs everything on the current RegisterController and macro state
+  // (vim.js replaces them when its global state is reset).
+  function ensureRegisters() {
+    var rc = Vim.getRegisterController();
+    if (rc.$vimkit) return rc;
+    rc.$vimkit = true;
+    var Register = rc.unnamedRegister.constructor;
+    rc.registers["+"] = clipboardRegister;
+    rc.registers["*"] = clipboardRegister;
+    rc.registers["%"] = fileRegister;
+    rc.registers["#"] = altFileRegister;
+    rc.registers["="] = expressionRegister;
+    var history = rc.registers[":"];
+    history.setText = function (text, linewise, blockwise) {
+      this.$previous = this.toString();
+      Register.prototype.setText.call(this, text, linewise, blockwise);
+    };
+
+    var isValid = rc.isValidRegister;
+    rc.isValidRegister = function (name) {
+      return isValid.call(this, name) || (typeof name == "string" && name.length == 1 && "*%#=".indexOf(name) >= 0);
+    };
+    var getRegister = rc.getRegister;
+    rc.getRegister = function (name) {
+      if ((!name || name == '"') && clipUnnamed()) return clipboardRegister;
+      return getRegister.call(this, name);
+    };
+    var unnamed = rc.unnamedRegister;
+    unnamed.setText = function (text, linewise, blockwise) {
+      Register.prototype.setText.call(this, text, linewise, blockwise);
+      if (!rc.$named && !rc.$keep && clipUnnamed()) clipboardRegister.setText(text, linewise, blockwise);
+    };
+    var pushText = rc.pushText;
+    rc.pushText = function (name, operator, text, linewise, blockwise) {
+      if (name && name.length == 1 && readOnlyRegisters.indexOf(name) >= 0) {
+        if (activeCm) showMessage(activeCm, "E354: Invalid register name: '" + name + "'", true);
+        return;
+      }
+      if (name === "_") return;
+      if (linewise && text.charAt(text.length - 1) !== "\n") text += "\n";
+      var deleting = operator == "delete" || operator == "change";
+      var multiline = text.indexOf("\n") != -1;
+      var vim = activeCm && activeCm.state.vim;
+      var viMotion = deleting && !multiline && vim && !vim.visualMode && viMotionCommand.test(activeCm.$recentKeys || "");
+      this.$named = !!name && name != '"';
+      try { pushText.call(this, name == '"' ? null : name, operator, text, linewise, blockwise); }
+      finally { this.$named = false; }
+      if (deleting && ((this.$isNamed(name) && multiline) || viMotion)) {
+        this.shiftNumericRegisters_();
+        this.registers["1"] = new Register(text, linewise, blockwise);
+      }
+    };
+    rc.$isNamed = function (name) { return !!name && name != '"'; };
+
+    // Macros as key text.
+    var mms = G().macroModeState;
+    var enter = mms.enterMacroRecordMode, exit = mms.exitMacroRecordMode;
+    mms.enterMacroRecordMode = function (cm, name) {
+      if (!/^[0-9a-zA-Z"]$/.test(name)) return;
+      var before = rc.getRegister(name).toString();
+      var prefix = /[A-Z]/.test(name) ? before : "";
+      enter.call(this, cm, name);
+      var reg = rc.getRegister(name);
+      // `before`: what @q runs while q is being recorded, as in Vim.
+      if (reg instanceof Register) reg.$recording = { prefix: prefix, inserts: [], before: before };
+    };
+    mms.exitMacroRecordMode = function () {
+      var name = this.latestRegister;
+      exit.call(this);
+      var reg = name && rc.getRegister(name);
+      var rec = reg && reg.$recording;
+      if (!rec) return;
+      reg.$recording = null;
+      var out = rec.prefix, k = 0, keys = reg.keyBuffer;
+      for (var i = 0; i <= keys.length; i++) {
+        while (k < rec.inserts.length && rec.inserts[k].at == i) out += rec.inserts[k++].text;
+        if (i < keys.length) out += keys[i] == "<" ? "<lt>" : keys[i];
+      }
+      reg.setText(out, false, false);
+      reg.insertModeChanges = [];
+      reg.searchQueries = [];
+    };
+    var proto = Register.prototype;
+    if (!proto.$vimkit) {
+      proto.$vimkit = true;
+      var pushChanges = proto.pushInsertModeChanges;
+      proto.pushInsertModeChanges = function (changes) {
+        pushChanges.call(this, changes);
+        if (!this.$recording) return;
+        var text = "";
+        (changes.changes || []).forEach(function (c) {
+          if (typeof c == "string") text += c.replace(/</g, "<lt>").replace(/\n/g, "<CR>");
+          else if (c && /Backspace/.test(c.keyName)) text += "<BS>";
+          else if (c && /Delete/.test(c.keyName)) text += "<Del>";
+        });
+        this.$recording.inserts.push({ at: this.keyBuffer.length, text: text + insertExitKey() });
+      };
+      var pushQuery = proto.pushSearchQuery;
+      proto.pushSearchQuery = function (query) {
+        if (!this.$recording) pushQuery.call(this, query); // prompt keys are recorded as keys
+      };
+    }
+    return rc;
+  }
+
+  // The key that left insert mode while recording.
+  function insertExitKey() {
+    var e = currentEvent;
+    if (e && e.ctrlKey && !e.altKey && !e.metaKey) {
+      if (e.key == "o") return "<C-o>";
+      if (e.key == "c") return "<C-c>";
+      if (e.key == "[") return "<C-[>";
+    }
+    return "<Esc>";
+  }
+
+  function keyNotation(e) {
+    var key = Vim.vimKeyFromEvent(e);
+    return key == "<" ? "<lt>" : key || "";
+  }
+
+  // Keys typed into the `:` or `/` prompt while recording.
+  function recordPromptKey(e) {
+    var mms = G().macroModeState;
+    if (!mms.isRecording || mms.isPlaying) return;
+    var reg = Vim.getRegisterController().getRegister(mms.latestRegister);
+    if (reg && reg.$recording) reg.keyBuffer.push(keyNotation(e));
+  }
+
+  Vim.defineAction("replayMacro", function (cm, args, vim) {
+    var rc = ensureRegisters(), mms = G().macroModeState;
+    var name = args.selectedCharacter || "", repeat = args.repeat || 1;
+    if (name == "@") name = mms.latestRegister || "";
+    else mms.latestRegister = name;
+    if (name == ":") {
+      var command = rc.getRegister(":").toString();
+      while (command && repeat--) Vim.handleEx(cm, command);
+      return;
+    }
+    if (!rc.isValidRegister(name)) return;
+    var reg = rc.getRegister(name);
+    var text = (reg.$recording ? reg.$recording.before : reg.toString()).replace(/\x1b/g, "<Esc>").replace(/\r/g, "<CR>");
+    if (!text) return;
+    if ((cm.$macroDepth || 0) >= 100) {
+      showMessage(cm, "E169: Command too recursive", true);
+      return;
+    }
+    var tokens = tokenizeKeys(text), playing = mms.isPlaying;
+    cm.$macroDepth = (cm.$macroDepth || 0) + 1;
+    // The keys run as if typed (search prompts, insert-mode changes and `.`
+    // work as in Vim); while recording, they must not be recorded again.
+    mms.isPlaying = !!mms.isRecording;
+    try {
+      play: while (repeat--) {
+        for (var i = 0; i < tokens.length; i++) {
+          if (!cm.$playMacroKey(tokens[i])) break play;
+        }
+      }
+    } finally {
+      mms.isPlaying = playing;
+      cm.$macroDepth--;
+    }
+  });
+
+  var verticalKeys = { j: 1, k: 1, "+": 1, "-": 1, "<CR>": 1, "<Down>": 1, "<Up>": 1, "<C-n>": 1, "<C-p>": 1, "<C-j>": 1 };
+  // Plays one key of a macro; false stops the macro (an error, or a line
+  // motion that could not move).
+  proto.$playMacroKey = function (token) {
+    var vim = this.state.vim, note = this.notification;
+    var line = -1;
+    if (verticalKeys[token] && vim && !vim.insertMode && !this.dialog && !vim.inputState.operator) {
+      line = this.getCursor().line;
+    }
+    var e = eventFromNotation(token), raw = this.$macroKeys;
+    this.$macroKeys = true;
+    try { if (!this.handleKeyEvent(e)) this.$defaultInput(e); }
+    finally { this.$macroKeys = raw; }
+    // The macro runs inside one vim operation; deliver this key's changes
+    // now, as a typed key would, so insert-mode changes and `.` see them.
+    var op = this.curOp;
+    if (op && op.change) {
+      var change = op.change, handlers = op.changeHandlers;
+      op.change = op.lastChange = null;
+      op.changeHandlers = null;
+      signalTo(handlers, this, change);
+    }
+    if (this.notification && this.notification !== note && this.notification.isError) return false;
+    if (line >= 0 && this.getCursor().line == line && !vim.inputState.operator) return false;
+    return true;
+  };
+
+  // Visual-mode P: like p, but the register keeps its text.
+  Vim.defineAction("vimkitPasteKeep", function (cm, args, vim) {
+    var rc = ensureRegisters(), u = rc.unnamedRegister;
+    var saved = [u.keyBuffer.slice(), u.linewise, u.blockwise];
+    rc.$keep = true;
+    try {
+      vim.inputState.registerName = args.registerName;
+      if (args.repeatIsExplicit && args.repeat > 1) Vim.handleKey(cm, String(args.repeat), "mapping");
+      Vim.handleKey(cm, "p", "mapping");
+    } finally {
+      u.keyBuffer = saved[0]; u.linewise = saved[1]; u.blockwise = saved[2];
+      rc.$keep = false;
+    }
+  });
+  Vim.mapCommand("P", "action", "vimkitPasteKeep", { after: false, isEdit: true }, { context: "visual" });
+
+  // "= in normal/visual mode and <C-r>= in insert mode ask for an expression.
+  function promptExpression(cm, done) {
+    var tpl = document.createElement("div");
+    tpl.appendChild(document.createTextNode("="));
+    var input = document.createElement("input");
+    tpl.appendChild(input);
+    cm.openDialog(tpl, function (value) {
+      var source = value || lastExpression;
+      if (!source) return;
+      lastExpression = source;
+      try { expressionResult = evaluate(cm, source).text(); }
+      catch (err) { showMessage(cm, String(err.message || err), true); return; }
+      done(expressionResult);
+    }, { bottom: true });
+  }
+  Vim.defineAction("setRegister", function (cm, args, vim) {
+    var name = args.selectedCharacter;
+    if (name != "=") { vim.inputState.registerName = name; return; }
+    promptExpression(cm, function () { vim.inputState.registerName = "="; });
+  });
+  Vim.defineAction("insertRegister", function (cm, args, vim) {
+    var name = args.selectedCharacter;
+    if (name == "=") {
+      promptExpression(cm, function (text) { if (text) cm.replaceSelection(text); });
+      return;
+    }
+    var rc = ensureRegisters();
+    if (!rc.isValidRegister(name)) return;
+    var text = rc.getRegister(name).toString();
+    if (text) cm.replaceSelection(text);
+  });
+
+  // "1p followed by . pastes "2, then "3 ...
+  function bumpNumberedPaste(vim) {
+    var input = vim.lastEditInputState, command = vim.lastEditActionCommand;
+    if (!input || !command || command.action != "paste") return;
+    var name = input.registerName;
+    if (/^[1-8]$/.test(name || "")) input.registerName = String(+name + 1);
+  }
+
+  // :registers / :display
+  var registerOrder = '"0123456789abcdefghijklmnopqrstuvwxyz-.:%#/=*+';
+  function displayText(text) {
+    var out = "";
+    for (var i = 0; i < text.length && out.length < 200; i++) {
+      var c = text.charCodeAt(i);
+      out += c < 32 ? "^" + String.fromCharCode(c + 64) : c == 127 ? "^?" : text.charAt(i);
+    }
+    return out;
+  }
+  function listRegisters(cm, params) {
+    var rc = ensureRegisters();
+    // Like vim.js's own :registers, it is not remembered in ":.
+    var history = rc.registers[":"];
+    if (history.$previous != null && history.toString() == params.input) history.setText(history.$previous);
+    var wanted = params.args ? params.args.join("").replace(/\s/g, "") : "";
+    var lines = ["Type Name Content"];
+    for (var i = 0; i < registerOrder.length; i++) {
+      var name = registerOrder.charAt(i);
+      if (wanted && wanted.indexOf(name) < 0 && wanted.indexOf(name.toUpperCase()) < 0) continue;
+      var reg = name == '"' ? rc.unnamedRegister : rc.registers[name];
+      if (name == '"' && clipUnnamed()) reg = clipboardRegister;
+      if (!reg) continue;
+      var text = reg.toString();
+      if (!text) continue;
+      var type = reg.blockwise ? "b" : reg.linewise ? "l" : "c";
+      lines.push("  " + type + "  \"" + name + "   " + displayText(text));
+    }
+    showMessage(cm, lines.join("\n"), false, true);
+  }
+  Vim.defineEx("registers", "reg", listRegisters);
+  Vim.defineEx("display", "di", listRegisters);
+
+  // :let @r = expr, :let @r .= expr, :let &option = expr
+  Vim.defineEx("let", "let", function (cm, params) {
+    var m = /^\s*(@.|&\w+)\s*(\.\.?=|\+=|-=|=)\s*([\s\S]*)$/.exec(params.argString || "");
+    if (!m) {
+      showMessage(cm, "E121: Undefined variable: " + String(params.argString || "").trim(), true);
+      return;
+    }
+    var value;
+    try { value = evaluate(cm, m[3]); }
+    catch (err) { showMessage(cm, String(err.message || err), true); return; }
+    var target = m[1], op = m[2];
+    if (target.charAt(0) == "&") {
+      var opt = target.slice(1);
+      var cur = Vim.getOption(opt, cm);
+      if (cur instanceof Error) { showMessage(cm, "E355: Unknown option: " + opt, true); return; }
+      var v = typeof cur == "number" || typeof cur == "boolean" ? value.num() : value.text();
+      if (op == "+=") v = (+cur || 0) + value.num();
+      else if (op == "-=") v = (+cur || 0) - value.num();
+      else if (op != "=") v = String(cur) + value.text();
+      Vim.setOption(opt, typeof cur == "boolean" ? !!v : v, cm);
+      return;
+    }
+    var name = target.charAt(1), rc = ensureRegisters();
+    if (name == "_") return;
+    if (name == "/") {
+      setSearchPattern(cm, value.text());
+      return;
+    }
+    if (".:%#=".indexOf(name) >= 0) { showMessage(cm, "E354: Invalid register name: '" + name + "'", true); return; }
+    var text = value.text();
+    if (op != "=" || /[A-Z]/.test(name)) text = rc.getRegister(name).toString() + text;
+    var reg = name == '"' ? rc.unnamedRegister : rc.getRegister(name.toLowerCase());
+    var linewise = /\n$/.test(text);
+    reg.setText(text, linewise);
+    if (reg !== rc.unnamedRegister && name != '"') rc.unnamedRegister.setText(text, linewise);
+  });
+
+  Vim.defineEx("echo", "ec", function (cm, params) {
+    var src = String(params.argString || "").trim();
+    if (!src) return;
+    try { showMessage(cm, evaluateList(cm, src).join(" "), false); }
+    catch (err) { showMessage(cm, String(err.message || err), true); }
+  });
+
+  // @/ = pattern: the next n and the highlight use it; the cursor stays.
+  function setSearchPattern(cm, pattern) {
+    var rc = ensureRegisters();
+    rc.getRegister("/").setText(pattern);
+    Vim.handleEx(cm, "nohlsearch"); // creates the search state
+    var re;
+    try { re = vimPatternToRegExp(pattern); }
+    catch (err) { showMessage(cm, "E486: Pattern not found: " + pattern, true); return; }
+    G().query = re;
+    var state = cm.state.vim && cm.state.vim.searchState_;
+    var overlay = { query: re, token: function () {} };
+    if (state) state.setOverlay(overlay);
+    cm.addOverlay(overlay);
+  }
+  // Vim's magic pattern syntax in a JavaScript RegExp (the common subset).
+  function vimPatternToRegExp(p) {
+    var out = "", ignoreCase = Vim.getOption("ignorecase") === true;
+    if (ignoreCase && Vim.getOption("smartcase") === true && /[A-Z]/.test(p)) ignoreCase = false;
+    for (var i = 0; i < p.length; i++) {
+      var c = p.charAt(i);
+      if (c == "\\" && i + 1 < p.length) {
+        var n = p.charAt(++i);
+        if (n == "<" || n == ">") out += "\\b";
+        else if ("(){}|+=?".indexOf(n) >= 0) out += n == "=" ? "?" : n;
+        else if (n == "c") ignoreCase = true;
+        else if (n == "C") ignoreCase = false;
+        else out += "\\" + n;
+      } else if ("(){}|+?".indexOf(c) >= 0) out += "\\" + c;
+      else out += c;
+    }
+    return new RegExp(out, ignoreCase ? "im" : "m");
+  }
+
+  // ---- expressions ---------------------------------------------------------
+  // A subset of Vim script expressions: numbers, floats, 'strings' and
+  // "strings", @r, &option, + - * / %, . and .. (concatenation), comparisons
+  // (== != > >= < <= =~ !~, # and ? variants), && || ! ?:, and the functions
+  // in exprFunctions.
+  function Val(v) { this.v = v; }
+  Val.prototype.isStr = function () { return typeof this.v == "string"; };
+  Val.prototype.num = function () {
+    if (typeof this.v == "number") return this.v;
+    var m = /^\s*([-+]?)(0[xX][0-9a-fA-F]+|\d+)/.exec(this.v);
+    if (!m) return 0;
+    var n = /^0[xX]/.test(m[2]) ? parseInt(m[2], 16) : parseInt(m[2], 10);
+    return m[1] == "-" ? -n : n;
+  };
+  Val.prototype.text = function () {
+    if (typeof this.v == "string") return this.v;
+    if (this.isFloat) {
+      if (!isFinite(this.v)) return this.v > 0 ? "inf" : this.v < 0 ? "-inf" : "nan";
+      var s = String(+this.v.toPrecision(6));
+      return /[.e]/.test(s) ? s : s + ".0";
+    }
+    return String(this.v);
+  };
+  function num(n, isFloat) { var v = new Val(n); v.isFloat = !!isFloat; return v; }
+  function str(s) { return new Val(String(s)); }
+
+  function pad(n, w) { n = String(n); while (n.length < w) n = "0" + n; return n; }
+  var dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  var monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September",
+    "October", "November", "December"];
+  function strftime(fmt, d) {
+    return fmt.replace(/%([a-zA-Z%])/g, function (_, c) {
+      var h = d.getHours();
+      switch (c) {
+        case "Y": return String(d.getFullYear());
+        case "y": return pad(d.getFullYear() % 100, 2);
+        case "m": return pad(d.getMonth() + 1, 2);
+        case "d": return pad(d.getDate(), 2);
+        case "e": return (d.getDate() < 10 ? " " : "") + d.getDate();
+        case "H": return pad(h, 2);
+        case "I": return pad(h % 12 || 12, 2);
+        case "M": return pad(d.getMinutes(), 2);
+        case "S": return pad(d.getSeconds(), 2);
+        case "p": return h < 12 ? "AM" : "PM";
+        case "a": return dayNames[d.getDay()].slice(0, 3);
+        case "A": return dayNames[d.getDay()];
+        case "b": case "h": return monthNames[d.getMonth()].slice(0, 3);
+        case "B": return monthNames[d.getMonth()];
+        case "j": return pad(Math.floor((d - new Date(d.getFullYear(), 0, 1)) / 864e5) + 1, 3);
+        case "u": return String(d.getDay() || 7);
+        case "w": return String(d.getDay());
+        case "F": return d.getFullYear() + "-" + pad(d.getMonth() + 1, 2) + "-" + pad(d.getDate(), 2);
+        case "T": return pad(h, 2) + ":" + pad(d.getMinutes(), 2) + ":" + pad(d.getSeconds(), 2);
+        case "D": return pad(d.getMonth() + 1, 2) + "/" + pad(d.getDate(), 2) + "/" + pad(d.getFullYear() % 100, 2);
+        case "z":
+          var o = -d.getTimezoneOffset();
+          return (o < 0 ? "-" : "+") + pad(Math.floor(Math.abs(o) / 60), 2) + pad(Math.abs(o) % 60, 2);
+        case "s": return String(Math.floor(d.getTime() / 1000));
+        case "n": return "\n";
+        case "t": return "\t";
+        case "%": return "%";
+        default: return "%" + c;
+      }
+    });
+  }
+  function lineArg(cm, v) {
+    var s = v.text();
+    if (s == ".") return cm.getCursor().line;
+    if (s == "$") return cm.lastLine();
+    if (s == "w0" || s == "w$") return s == "w0" ? 0 : cm.lastLine();
+    if (/^'.$/.test(s)) {
+      var mark = cm.state.vim && cm.state.vim.marks[s.charAt(1)];
+      var pos = mark && mark.find();
+      return pos ? pos.line : -1;
+    }
+    return v.num() - 1;
+  }
+  function expandArg(cm, s) {
+    var m = /^(%|#|<cword>|<cWORD>)((?::[phtre])*)$/.exec(s);
+    if (!m) return s;
+    var v;
+    if (m[1] == "%") v = cm.$fileName || "";
+    else if (m[1] == "#") v = cm.$altFileName || "";
+    else {
+      var cur = cm.getCursor(), line = cm.getLine(cur.line);
+      var re = m[1] == "<cword>" ? /[\wÀ-￿]/ : /\S/;
+      var a = cur.ch, b = cur.ch;
+      while (a > 0 && re.test(line.charAt(a - 1))) a--;
+      while (b < line.length && re.test(line.charAt(b))) b++;
+      v = line.slice(a, b);
+    }
+    m[2].split(":").slice(1).forEach(function (mod) {
+      if (mod == "t") v = v.replace(/^.*\//, "");
+      else if (mod == "h") v = v.indexOf("/") >= 0 ? v.replace(/\/[^\/]*$/, "") || "/" : ".";
+      else if (mod == "r") v = v.replace(/\.[^.\/]*$/, "");
+      else if (mod == "e") { var e = /\.([^.\/]*)$/.exec(v); v = e ? e[1] : ""; }
+    });
+    return v;
+  }
+  function printf(args) {
+    var fmt = args[0] ? args[0].text() : "", k = 1;
+    return fmt.replace(/%([-0 +#]*)(\d*)(?:\.(\d+))?([diouxXscfeEgG%])/g, function (all, flags, width, prec, conv) {
+      if (conv == "%") return "%";
+      var a = args[k++] || str("");
+      var s;
+      switch (conv) {
+        case "d": case "i": case "u": s = String(Math.trunc(a.num())); break;
+        case "o": s = Math.trunc(a.num()).toString(8); break;
+        case "x": s = Math.trunc(a.num()).toString(16); break;
+        case "X": s = Math.trunc(a.num()).toString(16).toUpperCase(); break;
+        case "c": s = String.fromCharCode(a.num()); break;
+        case "s": s = a.text(); if (prec) s = s.slice(0, +prec); break;
+        case "f": s = (typeof a.v == "number" ? a.v : a.num()).toFixed(prec ? +prec : 6); break;
+        case "e": case "E": s = (+a.v || a.num()).toExponential(prec ? +prec : 6); if (conv == "E") s = s.toUpperCase(); break;
+        default: s = String(+(+a.v || a.num()).toPrecision(prec ? +prec : 6));
+      }
+      if (/\+/.test(flags) && /[dif]/.test(conv) && s.charAt(0) != "-") s = "+" + s;
+      var w = +width || 0;
+      if (s.length < w) {
+        if (/-/.test(flags)) while (s.length < w) s += " ";
+        else if (/0/.test(flags) && conv != "s") { var neg = s.charAt(0) == "-" || s.charAt(0) == "+" ? s.charAt(0) : ""; s = s.slice(neg.length); while (s.length + neg.length < w) s = "0" + s; s = neg + s; }
+        else while (s.length < w) s = " " + s;
+      }
+      return s;
+    });
+  }
+  var exprFunctions = {
+    strlen: function (cm, a) { return num(a[0].text().length); },
+    len: function (cm, a) { return num(a[0].text().length); },
+    strchars: function (cm, a) { return num(Array.from(a[0].text()).length); },
+    toupper: function (cm, a) { return str(a[0].text().toUpperCase()); },
+    tolower: function (cm, a) { return str(a[0].text().toLowerCase()); },
+    repeat: function (cm, a) { var n = a[1].num(); return str(n > 0 ? new Array(n + 1).join(a[0].text()) : ""); },
+    trim: function (cm, a) { return str(a[0].text().trim()); },
+    string: function (cm, a) { return str(a[0].isStr() ? "'" + a[0].v.replace(/'/g, "''") + "'" : a[0].text()); },
+    str2nr: function (cm, a) { return num(a[1] ? parseInt(a[0].text(), a[1].num()) || 0 : a[0].num()); },
+    str2float: function (cm, a) { return num(parseFloat(a[0].text()) || 0, true); },
+    float2nr: function (cm, a) { return num(Math.trunc(+a[0].v || a[0].num())); },
+    abs: function (cm, a) { var v = a[0]; return num(Math.abs(typeof v.v == "number" ? v.v : v.num()), v.isFloat); },
+    round: function (cm, a) { return num(Math.round(+a[0].v || a[0].num()), true); },
+    floor: function (cm, a) { return num(Math.floor(+a[0].v || a[0].num()), true); },
+    ceil: function (cm, a) { return num(Math.ceil(+a[0].v || a[0].num()), true); },
+    sqrt: function (cm, a) { return num(Math.sqrt(+a[0].v || a[0].num()), true); },
+    pow: function (cm, a) { return num(Math.pow(+a[0].v || a[0].num(), +a[1].v || a[1].num()), true); },
+    line: function (cm, a) { var l = lineArg(cm, a[0]); return num(l < 0 ? 0 : l + 1); },
+    col: function (cm, a) {
+      var s = a[0].text();
+      if (s == "$") return num(cm.getLine(cm.getCursor().line).length + 1);
+      return num(cm.getCursor().ch + 1);
+    },
+    getline: function (cm, a) { var l = lineArg(cm, a[0]); return str(l >= 0 && l <= cm.lastLine() ? cm.getLine(l) : ""); },
+    expand: function (cm, a) { return str(expandArg(cm, a[0].text())); },
+    localtime: function () { return num(Math.floor(Date.now() / 1000)); },
+    strftime: function (cm, a) { return str(strftime(a[0].text(), a[1] ? new Date(a[1].num() * 1000) : new Date())); },
+    printf: function (cm, a) { return str(printf(a)); },
+    substitute: function (cm, a) {
+      var re = vimPatternToRegExp(a[1].text());
+      var flags = a[3] ? a[3].text() : "";
+      re = new RegExp(re.source, re.flags.replace("m", "") + (flags.indexOf("g") >= 0 ? "g" : ""));
+      var rep = a[2].text().replace(/\\(\d)/g, "$$$1").replace(/&/g, "$$&");
+      return str(a[0].text().replace(re, rep));
+    },
+    matchstr: function (cm, a) { var m = vimPatternToRegExp(a[1].text()).exec(a[0].text()); return str(m ? m[0] : ""); },
+    escape: function (cm, a) {
+      var chars = a[1].text();
+      return str(a[0].text().replace(/[\s\S]/g, function (c) { return chars.indexOf(c) >= 0 ? "\\" + c : c; }));
+    },
+    getreg: function (cm, a) { return str(ensureRegisters().getRegister(a[0] ? a[0].text() : '"').toString()); },
+    nr2char: function (cm, a) { return str(String.fromCodePoint(a[0].num())); },
+    char2nr: function (cm, a) { var s = a[0].text(); return num(s ? s.codePointAt(0) : 0); }
+  };
+
+  function tokenizeExpr(src) {
+    var re = /\s*(?:(0[xX][0-9a-fA-F]+|\d+\.\d+(?:[eE][-+]?\d+)?|\d+)|('(?:[^']|'')*')|("(?:[^"\\]|\\.)*")|(@.)|(&\w+)|([a-zA-Z_][\w:]*)|(\.\.|==[#?]?|!=[#?]?|>=[#?]?|<=[#?]?|=~[#?]?|!~[#?]?|&&|\|\||[-+*\/%.<>!?:(),]))/y;
+    var out = [], m;
+    re.lastIndex = 0;
+    while (re.lastIndex < src.length) {
+      var at = re.lastIndex;
+      if (/^\s*$/.test(src.slice(at))) break;
+      m = re.exec(src);
+      if (!m) throw new Error("E15: Invalid expression: \"" + src.slice(at).trim() + "\"");
+      if (m[1]) out.push({ t: "num", v: m[1] });
+      else if (m[2]) out.push({ t: "str", v: m[2].slice(1, -1).replace(/''/g, "'") });
+      else if (m[3]) out.push({ t: "str", v: unescapeDouble(m[3].slice(1, -1)) });
+      else if (m[4]) out.push({ t: "reg", v: m[4].charAt(1) });
+      else if (m[5]) out.push({ t: "opt", v: m[5].slice(1) });
+      else if (m[6]) out.push({ t: "name", v: m[6] });
+      else out.push({ t: "op", v: m[7] });
+    }
+    return out;
+  }
+  function unescapeDouble(s) {
+    return s.replace(/\\(x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{1,4}|<[^>]+>|[\s\S])/g, function (_, e) {
+      switch (e.charAt(0)) {
+        case "n": return e.length == 1 ? "\n" : e;
+        case "t": return "\t";
+        case "r": return "\r";
+        case "e": return "\x1b";
+        case "x": case "u": return String.fromCharCode(parseInt(e.slice(1), 16));
+        case "<": return e;
+        default: return e;
+      }
+    });
+  }
+
+  function Parser(cm, src) { this.cm = cm; this.src = src; this.toks = tokenizeExpr(src); this.i = 0; }
+  Parser.prototype.peek = function () { return this.toks[this.i]; };
+  Parser.prototype.isOp = function (v) { var t = this.toks[this.i]; return t && t.t == "op" && t.v == v; };
+  Parser.prototype.fail = function () {
+    throw new Error("E15: Invalid expression: \"" + this.src.trim() + "\"");
+  };
+  Parser.prototype.expect = function (v) { if (!this.isOp(v)) this.fail(); this.i++; };
+  Parser.prototype.expr = function () {
+    var c = this.or();
+    if (this.isOp("?")) {
+      this.i++;
+      var a = this.expr();
+      this.expect(":");
+      var b = this.expr();
+      return truthy(c) ? a : b;
+    }
+    return c;
+  };
+  function truthy(v) { return v.isStr() ? v.num() != 0 : v.v != 0; }
+  Parser.prototype.or = function () {
+    var a = this.and();
+    while (this.isOp("||")) { this.i++; var b = this.and(); a = num(truthy(a) || truthy(b) ? 1 : 0); }
+    return a;
+  };
+  Parser.prototype.and = function () {
+    var a = this.cmp();
+    while (this.isOp("&&")) { this.i++; var b = this.cmp(); a = num(truthy(a) && truthy(b) ? 1 : 0); }
+    return a;
+  };
+  Parser.prototype.cmp = function () {
+    var a = this.add(), t = this.peek();
+    if (t && t.t == "op" && /^(==|!=|>=?|<=?|=~|!~)[#?]?$/.test(t.v)) {
+      this.i++;
+      var b = this.add(), op = t.v.replace(/[#?]$/, "");
+      var ic = /\?$/.test(t.v) || (!/#$/.test(t.v) && Vim.getOption("ignorecase") === true);
+      var r;
+      if (op == "=~" || op == "!~") {
+        var re = vimPatternToRegExp(b.text());
+        if (ic) re = new RegExp(re.source, "im");
+        r = re.test(a.text()) == (op == "=~");
+      } else {
+        var x, y;
+        if (a.isStr() && b.isStr()) { x = a.v; y = b.v; if (ic) { x = x.toLowerCase(); y = y.toLowerCase(); } }
+        else { x = typeof a.v == "number" ? a.v : a.num(); y = typeof b.v == "number" ? b.v : b.num(); }
+        r = op == "==" ? x == y : op == "!=" ? x != y : op == ">" ? x > y : op == ">=" ? x >= y : op == "<" ? x < y : x <= y;
+      }
+      return num(r ? 1 : 0);
+    }
+    return a;
+  };
+  Parser.prototype.add = function () {
+    var a = this.mul();
+    for (;;) {
+      var t = this.peek();
+      if (!t || t.t != "op" || !/^(\+|-|\.|\.\.)$/.test(t.v)) return a;
+      this.i++;
+      var b = this.mul();
+      if (t.v == "." || t.v == "..") { a = str(a.text() + b.text()); continue; }
+      var f = a.isFloat || b.isFloat;
+      var x = f ? +a.v || a.num() : a.num(), y = f ? +b.v || b.num() : b.num();
+      a = num(t.v == "+" ? x + y : x - y, f);
+    }
+  };
+  Parser.prototype.mul = function () {
+    var a = this.unary();
+    for (;;) {
+      var t = this.peek();
+      if (!t || t.t != "op" || !/^[*\/%]$/.test(t.v)) return a;
+      this.i++;
+      var b = this.unary();
+      var f = a.isFloat || b.isFloat;
+      var x = f ? +a.v || a.num() : a.num(), y = f ? +b.v || b.num() : b.num();
+      if (t.v == "*") a = num(x * y, f);
+      else if (t.v == "%") { if (f) throw new Error("E804: Cannot use '%' with Float"); a = num(y == 0 ? 0 : x % y); }
+      else if (f) a = num(x / y, true);
+      else if (y == 0) throw new Error("E1154: Divide by zero");
+      else a = num(Math.trunc(x / y));
+    }
+  };
+  Parser.prototype.unary = function () {
+    if (this.isOp("-")) { this.i++; var v = this.unary(); return num(-(v.isFloat ? v.v : v.num()), v.isFloat); }
+    if (this.isOp("+")) { this.i++; var w = this.unary(); return num(w.isFloat ? w.v : w.num(), w.isFloat); }
+    if (this.isOp("!")) { this.i++; return num(truthy(this.unary()) ? 0 : 1); }
+    return this.primary();
+  };
+  Parser.prototype.primary = function () {
+    var t = this.toks[this.i++];
+    if (!t) this.fail();
+    if (t.t == "num") return /[.eE]/.test(t.v) && !/^0[xX]/.test(t.v) ? num(parseFloat(t.v), true) : num(/^0[xX]/.test(t.v) ? parseInt(t.v, 16) : parseInt(t.v, 10));
+    if (t.t == "str") return str(t.v);
+    if (t.t == "reg") return str(ensureRegisters().getRegister(t.v).toString());
+    if (t.t == "opt") {
+      var o = Vim.getOption(t.v, this.cm);
+      if (o instanceof Error || o === undefined) o = this.cm.getOption(t.v);
+      if (o === undefined) throw new Error("E113: Unknown option: " + t.v);
+      return typeof o == "boolean" ? num(o ? 1 : 0) : typeof o == "number" ? num(o) : str(o);
+    }
+    if (t.t == "name") {
+      if (t.v == "v:true") return num(1);
+      if (t.v == "v:false") return num(0);
+      if (!this.isOp("(")) throw new Error("E121: Undefined variable: " + t.v);
+      this.i++;
+      var args = [];
+      if (!this.isOp(")")) {
+        args.push(this.expr());
+        while (this.isOp(",")) { this.i++; args.push(this.expr()); }
+      }
+      this.expect(")");
+      var fn = exprFunctions[t.v];
+      if (!fn) throw new Error("E117: Unknown function: " + t.v);
+      return fn(this.cm, args);
+    }
+    if (t.t == "op" && t.v == "(") { var v = this.expr(); this.expect(")"); return v; }
+    this.i--;
+    this.fail();
+  };
+  function evaluate(cm, src) {
+    var p = new Parser(cm, src);
+    var v = p.expr();
+    if (p.i < p.toks.length) p.fail();
+    return v;
+  }
+  function evaluateList(cm, src) {
+    var p = new Parser(cm, src), out = [];
+    while (p.i < p.toks.length) out.push(p.expr().text());
+    return out;
+  }
+
+  // ---- options the host shows: number, relativenumber, numberwidth ----------
+  var hostOptionValues = {};
+  function defineHostOption(name, aliases, type, def) {
+    Vim.defineOption(name, undefined, type, aliases, function (value, cm) {
+      if (cm === undefined) {
+        if (value === undefined) return name in hostOptionValues ? hostOptionValues[name] : def;
+        hostOptionValues[name] = value;
+        return;
+      }
+      var local = cm.$vimOptions || (cm.$vimOptions = {});
+      if (value === undefined) return local[name];
+      local[name] = value;
+      if (cm.$host) cm.$host().event("option", name);
+    });
+  }
+  defineHostOption("number", ["nu"], "boolean", false);
+  defineHostOption("relativenumber", ["rnu"], "boolean", false);
+  defineHostOption("numberwidth", ["nuw"], "number", 4);
+  Vim.defineOption("clipboard", "", "string", ["cb"]);
+
+  // vim.js's ex command table, for wrapping its commands.
+  var exCommands = null;
+  Vim.defineEx("vimkitexcommands", "vimkitexcommands", function () { exCommands = this; });
+  function wrapExCommands(cm) {
+    if (exCommands) return;
+    var history = Vim.getRegisterController().getRegister(":"), previous = history.toString();
+    Vim.handleEx(cm, "vimkitexcommands");
+    history.setText(previous);
+    if (!exCommands) return;
+    // :set nu rnu sets each option.
+    var set = exCommands.set;
+    exCommands.set = function (cm, params) {
+      var args = params.args;
+      if (!args || args.length < 2) return set.call(this, cm, params);
+      for (var i = 0; i < args.length; i++) {
+        var one = {};
+        for (var k in params) one[k] = params[k];
+        one.args = [args[i]];
+        one.argString = args[i];
+        set.call(this, cm, one);
+      }
+    };
+  }
+
+  proto.getVimOption = function (name) {
+    var v = Vim.getOption(name, this);
+    return v instanceof Error || v === undefined ? null : v;
+  };
+  proto.setVimOption = function (name, value) {
+    var r = Vim.setOption(name, value, this, { scope: "local" });
+    return !(r instanceof Error);
+  };
+
+  // <C-r>{register}, <C-r><C-w> (word), <C-r><C-a> (WORD), <C-r><C-l> (line)
+  // in the `:` and `/` prompts. True when the key was used here.
+  proto.$promptRegisterKey = function (e) {
+    var d = this.dialog, plain = !e.ctrlKey && !e.altKey && !e.metaKey;
+    if (!d.$ctrlR) {
+      if (e.ctrlKey && !e.altKey && !e.metaKey && e.key == "r") { d.$ctrlR = true; return true; }
+      return false;
+    }
+    d.$ctrlR = false;
+    var text = null;
+    if (e.ctrlKey && !e.altKey && !e.metaKey && (e.key == "w" || e.key == "a")) {
+      text = expandArg(this, e.key == "w" ? "<cword>" : "<cWORD>");
+    } else if (e.ctrlKey && e.key == "l") {
+      text = this.getLine(this.getCursor().line);
+    } else if (plain && e.key.length == 1 && e.key != "=") {
+      var rc = ensureRegisters();
+      if (rc.isValidRegister(e.key)) text = rc.getRegister(e.key).toString().replace(/\n$/, "");
+    }
+    if (text) {
+      var input = d.input, v = input.value, at = Math.max(0, Math.min(input.selectionEnd, v.length));
+      input.value = v.slice(0, at) + text + v.slice(at);
+      input.selectionStart = input.selectionEnd = at + text.length;
+      if (d.options.onInput) d.options.onInput(makeEvent(e, input), input.value, d.close);
+    }
+    return true;
+  };
+
   global.VimKit = {
     Vim: Vim,
     CodeMirror: CodeMirror,
@@ -2368,11 +3255,37 @@
         cm.$emitState();
       });
       Vim.enterVimMode(cm);
+      wrapExCommands(cm);
       cm.curOp = null;
       cm.$emitState();
       return cm;
     },
     defineEx: defineHostEx,
+    // Registers for the host: { text, kind } or null; kind is "c", "l" or "b".
+    getRegister: function (name) {
+      var rc = ensureRegisters();
+      if (!rc.isValidRegister(name)) return null;
+      var reg = name == '"' ? rc.unnamedRegister : rc.getRegister(name);
+      var text = reg ? reg.toString() : "";
+      if (!text) return null;
+      return { text: text, kind: reg.blockwise ? "b" : reg.linewise ? "l" : "c" };
+    },
+    setRegister: function (name, text, kind) {
+      var rc = ensureRegisters();
+      if (!rc.isValidRegister(name) || name == "_" || ".:%#=".indexOf(name) >= 0) return false;
+      var reg = name == '"' ? rc.unnamedRegister : rc.getRegister(name.toLowerCase());
+      if (text == null) reg.setText("");
+      else reg.setText(String(text), kind == "l", kind == "b");
+      return true;
+    },
+    registerNames: function () {
+      var rc = ensureRegisters(), out = [];
+      for (var i = 0; i < registerOrder.length; i++) {
+        var n = registerOrder.charAt(i), reg = n == '"' ? rc.unnamedRegister : rc.registers[n];
+        if (reg && reg.toString()) out.push(n);
+      }
+      return out.join("");
+    },
     exec: function (command) {
       // Global commands (:map, :set, ...) need an editor; use a throwaway one.
       var silent = {

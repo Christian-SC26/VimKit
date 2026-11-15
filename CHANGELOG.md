@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Registers as in Vim: `"*`/`"+` on the clipboard (`'clipboard'`
+  unnamed/unnamedplus), `"%`/`"#` from `VimEngine.fileName` /
+  `alternateFileName`, the expression register `"=` (numbers, strings,
+  `@r`, `&option`, operators and functions such as `strftime`, `printf`,
+  `expand`, `line`), `:let @r`, `:echo`, `:registers`/`:display` in Vim's
+  layout, `<C-r>{reg}` / `<C-r><C-w>` in the command line, `"1` for named
+  deletes and Vi motions, `"1p..`, read-only registers refuse writes,
+  visual `P` keeps the register. Macros are key text: they can be pasted,
+  edited and run again, replay as typed and stop at the first failing key.
+  `VimRuntime.register(_:)`, `setRegister(_:to:)`, `registerNames`.
+- Line numbers on macOS: `:set number` / `relativenumber` / `numberwidth`,
+  `VimTextView.lineNumbers`, `VimEditor.vimLineNumbers(_:)`.
+  `VimEngine.vimOption(_:)` / `setVimOption(_:_:)` read and set vim
+  options; the delegate gets `vimEngine(_:didChangeOption:)`.
 - macOS `VimTextView`: the system find bar (`NSTextFinder`: ⌘F, ⌥⌘F, ⌘G,
   ⇧⌘G, ⌘E, Replace All through the engine) and spell checking
   (`isContinuousSpellCheckingEnabled`, `spellCheckingScope`, guesses in the
