@@ -10,7 +10,12 @@ import UIKit
 /// their container origin (`textContainerOrigin` / `textContainerInset`).
 @MainActor
 final class TextKit2Geometry {
-    weak var layoutManager: NSTextLayoutManager?
+    weak var layoutManager: NSTextLayoutManager? {
+        didSet {
+            guard let layoutManager, layoutManager !== oldValue else { return }
+            installValidator(on: layoutManager)
+        }
+    }
 
     /// Text before this offset has exact (not estimated) layout.
     private var exactLayoutEnd = 0
@@ -179,6 +184,43 @@ final class TextKit2Geometry {
     /// The character range the block cursor paints, if any.
     var cursorRange: NSRange? { cursor?.range }
 
+    /// TextKit 2 drops rendering attributes when it rebuilds text elements
+    /// (e.g. after the text is set). The validator runs before each layout
+    /// fragment is drawn and puts the highlight and cursor back.
+    private func installValidator(on layoutManager: NSTextLayoutManager) {
+        let previous = layoutManager.renderingAttributesValidator
+        layoutManager.renderingAttributesValidator = { [weak self] manager, fragment in
+            previous?(manager, fragment)
+            nonisolated(unsafe) let fragment = fragment
+            MainActor.assumeIsolated { self?.restoreAttributes(in: fragment) }
+        }
+    }
+
+    private func restoreAttributes(in fragment: NSTextLayoutFragment) {
+        guard let layoutManager, cursor != nil || !highlightRanges.isEmpty else { return }
+        let range = fragment.rangeInElement
+        let start = offset(of: range.location)
+        let span = NSRange(location: start, length: offset(of: range.endLocation) - start)
+        if let highlightColor {
+            // Matches are sorted; skip those before the fragment.
+            var lo = 0, hi = highlightRanges.count
+            while lo < hi {
+                let mid = (lo + hi) / 2
+                if highlightRanges[mid].upperBound <= span.location { lo = mid + 1 } else { hi = mid }
+            }
+            for match in highlightRanges[lo...] {
+                if match.location >= span.upperBound { break }
+                if let overlap = textRange(for: NSIntersectionRange(match, span)) {
+                    layoutManager.addRenderingAttribute(.backgroundColor, value: highlightColor, for: overlap)
+                }
+            }
+        }
+        if let cursor, NSIntersectionRange(cursor.range, span).length > 0, let target = textRange(for: cursor.range) {
+            layoutManager.addRenderingAttribute(.backgroundColor, value: cursor.background, for: target)
+            layoutManager.addRenderingAttribute(.foregroundColor, value: cursor.foreground, for: target)
+        }
+    }
+
     /// Replaces the search highlight with `ranges`.
     func setHighlights(_ ranges: [NSRange], color: Any) {
         guard let layoutManager else { return }
@@ -198,10 +240,9 @@ final class TextKit2Geometry {
     /// Paints the block cursor over `range` (one character), or removes it.
     func setCursor(_ range: NSRange?, background: NSObject, foreground: NSObject) {
         guard let layoutManager else { return }
-        if !cursorStale, let old = cursor, let range, old.range == range,
-           old.background.isEqual(background), old.foreground.isEqual(foreground) {
-            return
-        }
+        // Always repaint, even for the same range: TextKit 2 can drop rendering
+        // attributes on its own (e.g. while the view is resized), and the
+        // validator only runs for fragments it lays out again.
         if cursorStale {
             // Edits may have moved or dropped the old attributes; repaint everything.
             cursor = range.map { ($0, background, foreground) }

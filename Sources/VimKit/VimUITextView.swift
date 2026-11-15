@@ -355,13 +355,16 @@ open class VimUITextView: UITextView {
 
     private func updateBlockCursor() {
         let offset = vim.status.cursorOffset
+        let previous = blockCursorFrame
         guard showsBlockCursor, let rect = characterRect(at: offset) else {
             blockCursorFrame = nil
             blockCursor.isHidden = true
             geometry.setCursor(nil, background: resolvedCaretColor, foreground: cursorTextColor)
+            if let previous { redrawText(in: previous) }
             return
         }
         blockCursorFrame = rect
+        redrawText(in: previous.map { $0.union(rect) } ?? rect)
         let text = (text ?? "") as NSString
         if offset < text.length, ![0x0A, 0x0D].contains(text.character(at: offset)) {
             geometry.setCursor(text.rangeOfComposedCharacterSequence(at: offset), background: resolvedCaretColor, foreground: cursorTextColor)
@@ -409,6 +412,20 @@ open class VimUITextView: UITextView {
         return geometry.characterIndex(at: CGPoint(x: point.x - origin.x, y: point.y - origin.y), text: (text ?? "") as NSString)
     }
 
+    /// TextKit 2 does not redraw text when only rendering attributes change
+    /// (cursor, search highlight), so mark the text under `rect` for display.
+    private func redrawText(in rect: CGRect) {
+        func mark(_ view: UIView) {
+            for subview in view.subviews where subview !== blockCursor && !foldLabels.contains(where: { $0 === subview }) {
+                let local = subview.convert(rect, from: self)
+                guard subview.bounds.intersects(local) else { continue }
+                subview.setNeedsDisplay(local)
+                mark(subview)
+            }
+        }
+        mark(self)
+    }
+
     // MARK: Folding
 
     private func applyFolds() {
@@ -454,6 +471,7 @@ open class VimUITextView: UITextView {
 
     private func updateSearchHighlight() {
         geometry.setHighlights(isVimEnabled ? vim.searchMatches(limit: 5_000) : [], color: searchHighlightColor)
+        redrawText(in: visibleContentRect)
     }
 
     private func notifyTextChanged() {
