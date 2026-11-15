@@ -175,4 +175,14 @@ public final class VimRuntime {
             self.context.objectForKeyedSubscript("__vimkitFireTimer")?.call(withArguments: [id])
         }
     }
+
+    /// Fires every pending timer now, in the order they were scheduled
+    /// (tests use it instead of waiting for vim.js's timeouts).
+    func firePendingTimers() {
+        for id in timers.keys.sorted() {
+            guard let task = timers.removeValue(forKey: id) else { continue }
+            task.cancel()
+            context.objectForKeyedSubscript("__vimkitFireTimer")?.call(withArguments: [id])
+        }
+    }
 }

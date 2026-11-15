@@ -71,19 +71,18 @@ struct MotionTests {
         #expect(vim.cursor.column == 4)
     }
 
-    @Test func searchForwardAndNext() async throws {
-        let vim = makeEngine("foo bar\nbar foo\nfoo")
+    @Test func searchForwardAndNext() {
+        let runtime = VimRuntime()
+        runtime.clipboard = InMemoryClipboard()
+        let vim = VimEngine(text: "foo bar\nbar foo\nfoo", runtime: runtime)
         vim.feed("/foo<CR>")
         #expect(vim.cursor == VimPosition(line: 1, column: 4))
         vim.feed("n")
         #expect(vim.cursor == VimPosition(line: 2, column: 0))
         vim.feed("N")
         #expect(vim.cursor == VimPosition(line: 1, column: 4))
-        // vim.js applies the highlight on a 50 ms timer; the main actor may be busy with other tests.
-        let deadline = ContinuousClock.now + .seconds(10)
-        while vim.searchMatches().count != 3, ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(20))
-        }
+        // vim.js applies the highlight on a 50 ms timer; under load (CI) it may not get to run.
+        runtime.firePendingTimers()
         #expect(vim.searchMatches().count == 3)
         vim.feed("<Esc>")
         #expect(vim.searchMatches().isEmpty)
