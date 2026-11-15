@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Breaking:** `VimTextView` (macOS) is now an `NSView` that lays out and
+  draws its text itself instead of an `NSTextView` on TextKit 2. Positions
+  and the document height are exact, so the scroller no longer jumps or
+  changes scale on long files. It keeps input methods and dictation
+  (`NSTextInputClient`), the standard editing commands, the Edit menu,
+  mouse selection and accessibility (a text area). New API: `textStorage`
+  (non-optional), `wrapsLines`, `textColor`, `backgroundColor`,
+  `onTextChange`; gone: `NSTextView`/`NSText` members such as `delegate`,
+  `textContainer`, `layoutManager`, `isVerticallyResizable`. 20,000 lines
+  in the view: first `G` 285 → 0.3 ms, `ggVG>` 367 → 16 ms, `ggVG=`
+  151 → 4 ms, `:%s/value/item/g` 463 → 124 ms.
 - `VimKitBench`: a performance stand (`swift run -c release VimKitBench`)
   that measures time, CPU, instructions, energy and memory for every
   operation at the engine and view levels and writes an HTML report.

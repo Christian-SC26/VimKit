@@ -14,7 +14,7 @@ private func makeTextView(_ text: String) -> VimTextView {
 }
 
 @MainActor
-private func press(_ view: NSTextView, _ characters: String, keyCode: UInt16, modifiers: NSEvent.ModifierFlags = []) {
+private func press(_ view: VimTextView, _ characters: String, keyCode: UInt16, modifiers: NSEvent.ModifierFlags = []) {
     let event = NSEvent.keyEvent(
         with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0,
         windowNumber: 0, context: nil, characters: characters,

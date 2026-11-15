@@ -6,7 +6,7 @@ import VimKit
 enum Level: String, Codable, CaseIterable, Sendable {
     /// `VimEngine` alone: JavaScriptCore + the vim.js adapter, no UI.
     case engine
-    /// `VimTextView` in an offscreen window: key event → engine → TextKit 2 → display.
+    /// `VimTextView` in an offscreen window: key event → engine → VimTextLayout → display.
     case view
 }
 
@@ -59,11 +59,6 @@ final class ViewDocument: BenchDocument {
         scrollView.hasVerticalScroller = true
         view = VimTextView(frame: NSRect(origin: .zero, size: size), options: VimOptions(), runtime: runtime)
         view.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
-        view.isVerticallyResizable = true
-        view.minSize = NSSize(width: 0, height: size.height)
-        view.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        view.autoresizingMask = [.width]
-        view.textContainer?.widthTracksTextView = true
         scrollView.documentView = view
         window.contentView = scrollView
         view.string = text

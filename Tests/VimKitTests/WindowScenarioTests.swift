@@ -160,30 +160,15 @@ struct WindowScenarioTests {
         #expect(editor.view.blockCursorFrame == nil, "no block cursor in insert mode")
     }
 
-    /// On a character the cursor paints it inverted (rendering attributes);
-    /// at a line end it is a box.
-    static func renderingColor(_ key: NSAttributedString.Key, at offset: Int, in view: VimTextView) -> NSColor? {
-        guard let layout = view.textLayoutManager, let content = layout.textContentManager,
-              let location = content.location(content.documentRange.location, offsetBy: offset)
-        else { return nil }
-        var color: NSColor?
-        layout.enumerateRenderingAttributes(from: location, reverse: false) { _, attributes, range in
-            if range.location.compare(location) != .orderedDescending { color = attributes[key] as? NSColor }
-            return false
-        }
-        return color
-    }
-
+    /// On a character the cursor paints it inverted; at a line end it is a box.
     @Test func blockCursorInvertsTheCharacter() {
         let editor = EditorWindow(text: "abc\n\nxyz")
         editor.type("l")
-        let renderingColor = { (key: NSAttributedString.Key, offset: Int) in Self.renderingColor(key, at: offset, in: editor.view) }
-        #expect(renderingColor(.backgroundColor, 1) == editor.view.caretColor)
-        #expect(renderingColor(.foregroundColor, 1) != nil)
+        #expect(editor.view.invertedCursorRange == NSRange(location: 1, length: 1))
         #expect(!editor.view.showsCursorBox, "no box on a character")
         editor.type("j")
         #expect(editor.view.vim.cursorOffset == 4)
-        #expect(renderingColor(.backgroundColor, 1) == nil, "old character restored")
+        #expect(editor.view.invertedCursorRange == nil)
         #expect(editor.view.showsCursorBox, "box on an empty line")
         editor.type("i")
         #expect(!editor.view.showsCursorBox)
@@ -244,12 +229,33 @@ struct WindowScenarioTests {
 
     @Test func tokenTypeAttributeGuidesPercent() {
         let editor = EditorWindow(text: "(a \")\" b)")
-        editor.view.textStorage?.addAttribute(.vimTokenType, value: VimTokenType.string, range: NSRange(location: 3, length: 3))
+        editor.view.textStorage.addAttribute(.vimTokenType, value: VimTokenType.string, range: NSRange(location: 3, length: 3))
         editor.type("%")
         #expect(editor.view.vim.cursorOffset == 8)
-        editor.view.textStorage?.removeAttribute(.vimTokenType, range: NSRange(location: 0, length: 9))
+        editor.view.textStorage.removeAttribute(.vimTokenType, range: NSRange(location: 0, length: 9))
         editor.type("0%")
         #expect(editor.view.vim.cursorOffset == 4, "without the attribute `%` matches the quoted bracket")
+    }
+
+    /// The document height is exact and doesn't change while jumping around,
+    /// so the scroller neither jumps nor rescales (TextKit 2 estimated it).
+    @Test func documentHeightIsExactAndStable() {
+        let editor = EditorWindow(text: Self.numbered(20_000))
+        let row = editor.view.layout.rowHeight
+        let height = editor.view.frame.height
+        #expect(height == 20_000 * row)
+        var heights: Set<CGFloat> = []
+        for keys in ["G", "gg", "10000G", "G", "gg", "15000Gzz", "gg"] {
+            editor.type(keys)
+            heights.insert(editor.view.frame.height)
+            #expect(cursorIsVisible(editor), "after \(keys)")
+        }
+        #expect(heights == [height])
+        editor.type("ggdd")
+        #expect(editor.view.frame.height == height - row)
+        editor.type("G")
+        #expect(editor.view.frame.height == height - row)
+        #expect(cursorIsVisible(editor))
     }
 
     @Test func insertModeTypingAndRepeat() {

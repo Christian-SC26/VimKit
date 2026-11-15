@@ -22,17 +22,7 @@ final class EditorWindow {
         scrollView.hasHorizontalScroller = !wraps
         view = VimTextView(frame: NSRect(origin: .zero, size: size), options: VimOptions(), runtime: runtime)
         view.font = .monospacedSystemFont(ofSize: fontSize, weight: .regular)
-        view.isVerticallyResizable = true
-        view.minSize = NSSize(width: 0, height: size.height)
-        view.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        view.autoresizingMask = [.width]
-        if wraps {
-            view.textContainer?.widthTracksTextView = true
-        } else {
-            view.isHorizontallyResizable = true
-            view.textContainer?.widthTracksTextView = false
-            view.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        }
+        view.wrapsLines = wraps
         scrollView.documentView = view
         window.contentView = scrollView
         view.string = text

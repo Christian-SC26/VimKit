@@ -5,7 +5,7 @@ Vim keybindings for native Swift text views.
 VimKit runs the mature, editor-agnostic Vim engine from
 [codemirror-vim](https://github.com/replit/codemirror-vim) (the one used by
 Replit, Obsidian and many CodeMirror-based editors) inside JavaScriptCore,
-and connects it to `NSTextView` through a small adapter. You get real Vim
+and connects it to native Swift text views through a small adapter. You get real Vim
 behaviour — motions, operators, text objects, registers, macros, marks,
 `.` repeat, visual/block modes, search, `:s`, `:g`, `:normal`, mappings —
 without writing a Vim implementation.
@@ -28,7 +28,7 @@ struct ContentView: View {
 | Product | Platforms | What it is |
 |---|---|---|
 | `VimCore` | macOS 14+, iOS 17+ | `VimEngine`: the headless engine. Feed it keys, it edits text and tells a delegate. |
-| `VimKit` | macOS 14+, iOS 17+ | `VimTextView` (an `NSTextView` subclass, TextKit 2), `VimUITextView` (a `UITextView` subclass, TextKit 2), and `VimEditor` and `VimStatusLine` for SwiftUI. Re-exports `VimCore`. |
+| `VimKit` | macOS 14+, iOS 17+ | `VimTextView` (an `NSView` that lays out and draws its text itself), `VimUITextView` (a `UITextView` subclass, TextKit 2), and `VimEditor` and `VimStatusLine` for SwiftUI. Re-exports `VimCore`. |
 
 Add the package in Xcode (*File → Add Package Dependencies…*) or in `Package.swift`:
 
@@ -61,10 +61,14 @@ textView.onSave = { document.save() }
 scrollView.documentView = textView
 ```
 
-`VimTextView` works like any `NSTextView`: set `string`, `font`, `delegate`,
-attributes for syntax highlighting, and so on. Key presses go to Vim first;
-anything Vim does not consume (typing in insert mode, `⌘` shortcuts, IME
-composition) reaches the text view normally. Edits and selection changes
+`VimTextView` is a code view of its own rather than an `NSTextView`
+subclass: set `string`, `font`, `textColor`, `textContainerInset` and
+`wrapsLines`, color text with `.foregroundColor` attributes on `textStorage`,
+and follow edits with `onTextChange` (or `NSText.didChangeNotification`).
+Put it in an `NSScrollView`; it sizes itself to the clip view and the text.
+Key presses go to Vim first; anything Vim does not consume (typing in insert
+mode, `⌘` shortcuts, IME composition, dictation) goes through
+`NSTextInputClient` and the standard editing commands, as in a text view. Edits and selection changes
 are mirrored both ways, so mouse selection enters visual mode and typed
 text becomes part of Vim's undo history and `.` repeat.
 
@@ -111,7 +115,7 @@ control use `runtime.setLangmap(...)`.
 ## How it works
 
 ```
-NSTextView ⇄ VimTextView ⇄ VimEngine (Swift) ⇄ JavaScriptCore
+VimTextView (VimTextLayout + CoreText) ⇄ VimEngine (Swift) ⇄ JavaScriptCore
                                                   ├─ vimkit-adapter.js  CodeMirror 5–style document model
                                                   └─ vim.js             codemirror-vim engine (unmodified)
 ```
@@ -203,9 +207,14 @@ How this is kept fast:
 * JavaScriptCore runs the adapter without a JIT (always so on iOS), so
   scans over the whole file are done in Swift: fold blocks for `zM` and
   indentation for `>`, `<`, `=` over 32 or more lines.
-* `VimTextView` keeps exact TextKit 2 layout up to the furthest position it
-  has measured. Without this, TextKit 2's estimated line heights would make
-  `zb`, `H`, `L` and `<C-d>` land on the wrong line.
+* `VimTextView` lays out text itself (`VimTextLayout`): every screen row
+  has the same height, each line knows how many rows it wraps to (counted
+  from glyph advances, typeset with CoreText only when it may wrap), and a
+  Fenwick tree sums them. Every position and the document height are exact,
+  so the scroller never jumps or rescales, and a jump anywhere costs
+  O(log lines). Only visible lines are drawn. TextKit 2 estimates the height
+  of text away from the screen and re-estimates it while scrolling, and
+  exact TextKit 2 layout of 20,000 lines took ~300 ms after each far edit.
 
 `WindowScenarioTests` checks text, cursor, scrolling and selection in a real
 window. It covers `G`, search, `<C-d>`/`<C-u>`/`<C-f>`/`<C-b>`, `zt`/`zz`/`zb`,

@@ -129,19 +129,16 @@ struct VimTextViewRepresentable: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSScrollView {
         let textView = VimTextView(options: configuration.options)
-        textView.autoresizingMask = [.width]
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.minSize = .zero
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
-        textView.textContainer?.widthTracksTextView = true
         textView.textContainerInset = configuration.textInset
         textView.font = configuration.font
         textView.string = text
         textView.isVimEnabled = configuration.isVimEnabled
-        textView.delegate = context.coordinator
 
         let coordinator = context.coordinator
+        textView.onTextChange = { [weak coordinator, weak textView] in
+            guard let coordinator, let textView else { return }
+            coordinator.textChanged(textView.string)
+        }
         textView.onStatusChange = { [weak coordinator] status in coordinator?.statusChanged(status) }
         textView.onSave = { [weak coordinator] in coordinator?.parent.configuration.onSave?() }
         textView.onExCommand = { [weak coordinator] command in coordinator?.parent.configuration.onExCommand?(command) }
@@ -164,16 +161,14 @@ struct VimTextViewRepresentable: NSViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, NSTextViewDelegate {
+    final class Coordinator {
         var parent: VimTextViewRepresentable
 
         init(_ parent: VimTextViewRepresentable) {
             self.parent = parent
         }
 
-        func textDidChange(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else { return }
-            let text = textView.string
+        func textChanged(_ text: String) {
             if parent.text != text { parent.text = text }
         }
 

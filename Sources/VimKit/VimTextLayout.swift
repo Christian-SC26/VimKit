@@ -155,7 +155,12 @@ final class VimTextLayout {
 
     /// Attributes every line is laid out with.
     var attributes: [NSAttributedString.Key: Any] {
-        var attributes: [NSAttributedString.Key: Any] = [NSAttributedString.Key(kCTFontAttributeName as String): font]
+        // Drawn in the context's fill color, so one laid-out line serves any
+        // text color (and the inverted character under the block cursor).
+        var attributes: [NSAttributedString.Key: Any] = [
+            NSAttributedString.Key(kCTFontAttributeName as String): font,
+            NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true,
+        ]
         if let paragraphStyle { attributes[NSAttributedString.Key(kCTParagraphStyleAttributeName as String)] = paragraphStyle }
         return attributes
     }
@@ -181,6 +186,7 @@ final class VimTextLayout {
 
     /// Re-reads all of the text.
     func rebuild() {
+        widest = nil
         let length = text.length
         indexedLength = length
         var buffer = [UInt16](repeating: 0, count: length)
@@ -312,6 +318,20 @@ final class VimTextLayout {
             }
         }
         rows.replaceSubrange(first...last, with: newRows)
+        // The widest line only grows on edits (as in NSTextView); shrinking
+        // waits for the next full measure.
+        if let known = widest {
+            widest = units.withUnsafeBufferPointer { buffer -> CGFloat? in
+                var result = known
+                for k in 0..<newStarts.count {
+                    let start = newStarts[k] - regionStart
+                    let end = k + 1 < newStarts.count ? newStarts[k + 1] - 1 - regionStart : units.count
+                    guard let width = fastWidth(UnsafeBufferPointer(rebasing: buffer[start..<end])) else { return nil }
+                    result = max(result, width)
+                }
+                return result
+            }
+        }
 
         if !hiddenLines.isEmpty {
             hiddenLines = hiddenLines.compactMap { range in
@@ -332,6 +352,44 @@ final class VimTextLayout {
 
     /// Length of the text the line index describes.
     private var indexedLength = 0
+
+    private var widest: CGFloat?
+
+    /// Width of a line from glyph advances, or nil when it needs typesetting.
+    private func fastWidth(_ units: UnsafeBufferPointer<UInt16>) -> CGFloat? {
+        var x: CGFloat = 0
+        for unit in units {
+            if unit == 0x09 {
+                x = (floor(x / tabInterval + 0.001) + 1) * tabInterval
+            } else if let advance = advance(of: unit) {
+                x += advance
+            } else {
+                return nil
+            }
+        }
+        return x
+    }
+
+    /// Width of the widest line, for horizontal scrolling without wrapping.
+    /// Measured from glyph advances; lines that need typesetting are typeset.
+    func widestLineWidth() -> CGFloat {
+        if let widest { return widest }
+        let length = text.length
+        var buffer = [UInt16](repeating: 0, count: length)
+        if length > 0 { text.getCharacters(&buffer, range: NSRange(location: 0, length: length)) }
+        var result: CGFloat = 0
+        buffer.withUnsafeBufferPointer { units in
+            for line in 0..<starts.count {
+                let x = fastWidth(UnsafeBufferPointer(rebasing: units[starts[line]..<lineEnd(line)])) ?? {
+                    let layout = self.line(line)
+                    return (0..<layout.rowCount).map { CGFloat(CTLineGetTypographicBounds(layout.ctLine(row: $0), nil, nil, nil)) }.max() ?? 0
+                }()
+                result = max(result, x)
+            }
+        }
+        widest = result
+        return result
+    }
 
     // MARK: Folds
 
