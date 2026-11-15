@@ -13,7 +13,7 @@ struct TextLayoutTests {
     func randomText(lines: Int, seed: UInt64) -> String {
         var generator = SeededGenerator(seed: seed)
         let pieces = ["x", "word ", "\t", "привет ", "漢字", "😀", "e\u{301}", "    ", "(", ")", "{", "}", "averyveryverylongidentifier",
-                      " ", "", "a b c d e f g h i j k l m n o p "]
+                      " ", "", "a b c d e f g h i j k l m n o p ", "שלום ", "עולם", "مرحبا ", "بالعالم", "abc שלום def "]
         return (0..<lines).map { _ in
             let count = Int.random(in: 0...(Int.random(in: 0...9, using: &generator) == 0 ? 60 : 8), using: &generator)
             return (0..<count).map { _ in pieces.randomElement(using: &generator)! }.joined()
@@ -69,6 +69,10 @@ struct TextLayoutTests {
             guard character != 0x0A, text.rangeOfComposedCharacterSequence(at: offset).location == offset else { continue }
             let rect = layout.characterRect(at: offset)
             #expect(rect.height == layout.rowHeight)
+            // A glyph narrower than a point (a tab just before a tab stop) gets
+            // a space-wide box for the cursor, overlapping the next one.
+            let next = layout.characterRect(at: offset + text.rangeOfComposedCharacterSequence(at: offset).length)
+            if next.minY == rect.minY, next.minX > rect.minX, next.minX < rect.maxX - 0.5 { continue }
             let back = layout.characterIndex(at: CGPoint(x: rect.midX, y: rect.midY))
             #expect(back == offset, "offset \(offset) rect \(rect) → \(back)")
             if back != offset { return }

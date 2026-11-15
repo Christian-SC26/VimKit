@@ -71,8 +71,7 @@ extension VimTextView {
         for (line, y) in lines {
             for range in misspellings(inLine: line) ?? [] {
                 forEachRow(of: range, lines: [(line, y)]) { start, rowStart, rowEnd, ctLine, top, _ in
-                    let minX = CTLineGetOffsetForStringIndex(ctLine, max(range.location, rowStart) - start, nil)
-                    let maxX = CTLineGetOffsetForStringIndex(ctLine, min(range.upperBound, rowEnd) - start, nil)
+                    let (minX, maxX) = rowSpan(ctLine, from: max(range.location, rowStart) - start, to: min(range.upperBound, rowEnd) - start)
                     let baseline = top + min(layout.baseline + 3, lineHeight - 1)
                     path.move(to: CGPoint(x: origin.x + minX + 1, y: baseline))
                     path.line(to: CGPoint(x: origin.x + maxX - 1, y: baseline))

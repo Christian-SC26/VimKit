@@ -58,6 +58,50 @@ final class VimTextLayout {
             return line
         }
 
+        /// Left and right edges of the glyphs drawn for the characters in
+        /// `columns` on `row`, whichever way the text runs; nil when they draw
+        /// no glyph of their own.
+        func glyphSpan(row: Int, columns: Range<Int>) -> (minX: CGFloat, maxX: CGFloat)? {
+            var minX = CGFloat.infinity, maxX = -CGFloat.infinity
+            forEachGlyph(row: row) { index, x, advance in
+                if columns.contains(index) {
+                    minX = min(minX, x)
+                    maxX = max(maxX, x + advance)
+                }
+                return false
+            }
+            return minX <= maxX ? (minX, maxX) : nil
+        }
+
+        /// The character whose glyph covers `x` on `row`.
+        func column(atX x: CGFloat, row: Int) -> Int? {
+            var found: Int?
+            forEachGlyph(row: row) { index, glyphX, advance in
+                guard x >= glyphX, x < glyphX + max(advance, 0.5) else { return false }
+                found = index
+                return true
+            }
+            return found
+        }
+
+        /// Calls `body` with each glyph's string index (within the line), x and
+        /// advance until it returns true.
+        private func forEachGlyph(row: Int, _ body: (Int, CGFloat, CGFloat) -> Bool) {
+            guard let runs = CTLineGetGlyphRuns(ctLine(row: row)) as? [CTRun] else { return }
+            for run in runs {
+                let count = CTRunGetGlyphCount(run)
+                guard count > 0 else { continue }
+                var indices = [CFIndex](repeating: 0, count: count)
+                var positions = [CGPoint](repeating: .zero, count: count)
+                var advances = [CGSize](repeating: .zero, count: count)
+                let all = CFRange(location: 0, length: 0)
+                CTRunGetStringIndices(run, all, &indices)
+                CTRunGetPositions(run, all, &positions)
+                CTRunGetAdvances(run, all, &advances)
+                for g in 0..<count where body(indices[g], positions[g].x, advances[g].width) { return }
+            }
+        }
+
         /// x of the caret before `column` (within its row).
         func x(at column: Int) -> CGFloat {
             let row = row(containing: column)
@@ -140,14 +184,22 @@ final class VimTextLayout {
         tabInterval = spaceWidth * CGFloat(tabWidth)
         var interval = tabInterval
         let stops = [CTTextTab]() as CFArray
+        // Code reads left to right, with right-to-left runs (Hebrew,
+        // Arabic) inside it, as in Xcode: otherwise a line starting with them
+        // would flip and hang its trailing spaces off the left edge.
+        var direction = CTWritingDirection.leftToRight
         paragraphStyle = withUnsafePointer(to: &interval) { intervalPointer in
             withUnsafePointer(to: stops) { stopsPointer in
-                let settings = [
-                    CTParagraphStyleSetting(spec: .defaultTabInterval, valueSize: MemoryLayout<CGFloat>.size,
-                                            value: intervalPointer),
-                    CTParagraphStyleSetting(spec: .tabStops, valueSize: MemoryLayout<CFArray>.size, value: stopsPointer),
-                ]
-                return CTParagraphStyleCreate(settings, settings.count)
+                withUnsafePointer(to: &direction) { directionPointer in
+                    let settings = [
+                        CTParagraphStyleSetting(spec: .defaultTabInterval, valueSize: MemoryLayout<CGFloat>.size,
+                                                value: intervalPointer),
+                        CTParagraphStyleSetting(spec: .tabStops, valueSize: MemoryLayout<CFArray>.size, value: stopsPointer),
+                        CTParagraphStyleSetting(spec: .baseWritingDirection, valueSize: MemoryLayout<CTWritingDirection>.size,
+                                                value: directionPointer),
+                    ]
+                    return CTParagraphStyleCreate(settings, settings.count)
+                }
             }
         }
         advances = [Float](repeating: -1, count: 0x10000)
@@ -484,12 +536,19 @@ final class VimTextLayout {
         let row = layout.row(containing: column)
         let range = layout.rowRange(row)
         let ctLine = layout.ctLine(row: row)
-        let x = CTLineGetOffsetForStringIndex(ctLine, column, nil)
+        var x = CTLineGetOffsetForStringIndex(ctLine, column, nil)
         var width = spaceWidth
         if column < range.upperBound {
             let next = min(column + characterLength(at: starts[lineIndex] + column), range.upperBound)
-            let measured = CTLineGetOffsetForStringIndex(ctLine, next, nil) - x
-            if measured >= 1 { width = measured }
+            // The glyphs' own box: right-to-left text runs the other way.
+            let span = layout.glyphSpan(row: row, columns: column..<next) ?? {
+                let other = CTLineGetOffsetForStringIndex(ctLine, next, nil)
+                return (min(x, other), max(x, other))
+            }()
+            if span.maxX - span.minX >= 1 {
+                x = span.minX
+                width = span.maxX - span.minX
+            }
         }
         let y = (CGFloat(tree.prefix(lineIndex)) + CGFloat(row)) * rowHeight
         return CGRect(x: x, y: y, width: width, height: rowHeight)
@@ -512,11 +571,17 @@ final class VimTextLayout {
         let start = starts[lineIndex]
         if point.x <= 0 || range.isEmpty { return start + range.lowerBound }
         let ctLine = layout.ctLine(row: row)
-        var column = CTLineGetStringIndexForPosition(ctLine, CGPoint(x: point.x, y: 0))
-        if column == kCFNotFound { column = range.upperBound }
-        column = max(range.lowerBound, min(column, range.upperBound))
-        // Nearest boundary → the character containing x.
-        if column > range.lowerBound, CTLineGetOffsetForStringIndex(ctLine, column, nil) > point.x { column -= 1 }
+        var column: Int
+        if let hit = layout.column(atX: point.x, row: row) {
+            // The character whose glyph is under x, in either direction.
+            column = max(range.lowerBound, min(hit, range.upperBound))
+        } else {
+            column = CTLineGetStringIndexForPosition(ctLine, CGPoint(x: point.x, y: 0))
+            if column == kCFNotFound { column = range.upperBound }
+            column = max(range.lowerBound, min(column, range.upperBound))
+            // Nearest boundary → the character containing x.
+            if column > range.lowerBound, CTLineGetOffsetForStringIndex(ctLine, column, nil) > point.x { column -= 1 }
+        }
         let isLastRow = row == layout.rowCount - 1
         if column >= range.upperBound {
             column = isLastRow ? range.upperBound : max(range.lowerBound, range.upperBound - 1)

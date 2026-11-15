@@ -32,7 +32,35 @@ extension VimTextView {
     /// Edit › Find menu items; their `tag` is an `NSTextFinder.Action`.
     open override func performTextFinderAction(_ sender: Any?) {
         let tag = (sender as? NSValidatedUserInterfaceItem)?.tag ?? NSTextFinder.Action.showFindInterface.rawValue
-        textFinder.performAction(NSTextFinder.Action(rawValue: tag) ?? .showFindInterface)
+        _ = performFinderAction(NSTextFinder.Action(rawValue: tag) ?? .showFindInterface)
+    }
+
+    /// Performs a find bar action if it applies now.
+    func performFinderAction(_ action: NSTextFinder.Action) -> Bool {
+        withFindSelection(for: action) {
+            guard textFinder.validateAction(action) else { return false }
+            textFinder.performAction(action)
+            return true
+        }
+    }
+
+    /// "Use Selection for Find" (⌘E) with nothing selected — always so in
+    /// Vim's normal mode — uses the word under the cursor, like `*`.
+    func withFindSelection<T>(for action: NSTextFinder.Action, _ body: () -> T) -> T {
+        guard action == .setSearchString, selectedRange().length == 0, let word = wordUnderCursor else { return body() }
+        findSelectionOverride = word
+        defer { findSelectionOverride = nil }
+        return body()
+    }
+
+    /// The word (or run of punctuation) at the cursor, not blanks.
+    var wordUnderCursor: NSRange? {
+        let offset = isVimEnabled ? vim.status.cursorOffset : selectedRange().location
+        guard offset < textStorage.length else { return nil }
+        let range = textStorage.doubleClick(at: offset)
+        guard range.length > 0,
+              textStorage.attributedSubstring(from: range).string.contains(where: { !$0.isWhitespace }) else { return nil }
+        return range
     }
 
     /// The older find panel action; its tags are the same as `NSTextFinder.Action`.
@@ -52,9 +80,8 @@ extension VimTextView {
         case ("e", [.command]): .setSearchString
         default: nil
         }
-        guard let action, textFinder.validateAction(action) else { return false }
-        textFinder.performAction(action)
-        return true
+        guard let action else { return false }
+        return performFinderAction(action)
     }
 
     /// Visible lines that `range` touches, each with its top (text coordinates).
@@ -71,8 +98,7 @@ extension VimTextView {
         let origin = textOrigin
         var rects: [CGRect] = []
         forEachRow(of: range, lines: layoutLines(covering: range)) { start, rowStart, rowEnd, ctLine, top, _ in
-            let minX = CTLineGetOffsetForStringIndex(ctLine, max(range.location, rowStart) - start, nil)
-            let maxX = CTLineGetOffsetForStringIndex(ctLine, min(range.upperBound, rowEnd) - start, nil)
+            let (minX, maxX) = rowSpan(ctLine, from: max(range.location, rowStart) - start, to: min(range.upperBound, rowEnd) - start)
             rects.append(CGRect(x: origin.x + minX, y: top, width: max(maxX - minX, 1), height: lineHeight))
         }
         return rects
@@ -83,8 +109,7 @@ extension VimTextView {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         let origin = textOrigin
         forEachRow(of: range, lines: layoutLines(covering: range)) { start, rowStart, rowEnd, ctLine, top, _ in
-            let minX = CTLineGetOffsetForStringIndex(ctLine, max(range.location, rowStart) - start, nil)
-            let maxX = CTLineGetOffsetForStringIndex(ctLine, min(range.upperBound, rowEnd) - start, nil)
+            let (minX, maxX) = rowSpan(ctLine, from: max(range.location, rowStart) - start, to: min(range.upperBound, rowEnd) - start)
             context.saveGState()
             context.clip(to: CGRect(x: origin.x + minX, y: top, width: maxX - minX, height: lineHeight))
             context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
@@ -111,10 +136,15 @@ final class VimTextFinderClient: NSObject, @preconcurrency NSTextFinderClient {
     var allowsMultipleSelection: Bool { false }
     var isEditable: Bool { view?.isEditable ?? false }
 
-    var firstSelectedRange: NSRange { view?.selectedRange() ?? NSRange(location: 0, length: 0) }
+    var firstSelectedRange: NSRange {
+        view?.findSelectionOverride ?? view?.selectedRange() ?? NSRange(location: 0, length: 0)
+    }
 
     var selectedRanges: [NSValue] {
-        get { (view?.selectedRanges ?? []).map { NSValue(range: $0) } }
+        get {
+            if let override = view?.findSelectionOverride { return [NSValue(range: override)] }
+            return (view?.selectedRanges ?? []).map { NSValue(range: $0) }
+        }
         set { view?.setSelectedRanges(newValue.map(\.rangeValue)) }
     }
 

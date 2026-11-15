@@ -221,7 +221,7 @@ window. It covers `G`, search, `<C-d>`/`<C-u>`/`<C-f>`/`<C-b>`, `zt`/`zz`/`zb`,
 `H`/`M`/`L`, `gj`/`gk`/`g0`/`g$` on wrapped lines, visual mode, `:%s` with
 undo and redo, the block cursor, and insert-mode `.` repeat.
 
-### Find bar and spelling (macOS)
+### Find bar, spelling and other text services (macOS)
 
 `VimTextView` implements `NSTextFinderClient`, so the system find bar
 works: ⌘F, ⌥⌘F (replace), ⌘G / ⇧⌘G and ⌘E, from the Edit › Find menu or
@@ -229,7 +229,9 @@ from the keys even if the app's menu has no Find items. The bar shows in
 the enclosing scroll view; the text moves down under it, and Vim's screen
 motions (`H`, `L`, `zt`, `<C-f>`) measure the text below it. Replace All is
 sent to the engine (it is undone with `u`) and reported to the app once.
-Vim's own `/`, `n`, `:s` work as before.
+⌘E with nothing selected (always so in normal mode) takes the word under
+the cursor, like `*`; then ⌘G finds it. Vim's own `/`, `n`, `:s` work as
+before.
 
 Set `isContinuousSpellCheckingEnabled` (or `checksSpelling` in
 `VimEditor.Configuration`) to underline misspelled words. Visible lines are
@@ -239,6 +241,13 @@ Spelling and Grammar works (⌘;, the Spelling panel). With
 `spellCheckingScope = .stringsAndComments` only text marked by
 `.vimTokenType` (or `tokenTypeProvider`) is checked, so identifiers are
 not flagged.
+
+The Services menu sends the selection and takes text back; selected text
+can be dragged out, moved within the view (⌥ copies) and text or files
+dropped in; force click or the context menu's Look Up shows the
+dictionary. Lines read left to right, with Hebrew and Arabic runs laid out
+right to left inside them (as in Xcode); the cursor, selection and clicks
+follow the glyphs.
 
 ### Syntax awareness
 

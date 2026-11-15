@@ -108,6 +108,12 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
     var textFinderClient: VimTextFinderClient?
     /// Whether the find bar is replacing text (Replace All edits come one by one).
     var textFinderEditing = false
+    /// What the find bar sees as the selection for ⌘E with nothing selected.
+    var findSelectionOverride: NSRange?
+    /// Where dragged text would drop (VimTextView+Interaction.swift).
+    var dropIndex: Int?
+    /// The selection being dragged out of this view.
+    var draggedRange: NSRange?
     /// Misspelled ranges of each checked line's text, relative to the line.
     var spellResults: [String: [NSRange]] = [:]
     var spellPending: Set<String> = []
@@ -162,6 +168,8 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
 
     private func commonInit() {
         vim.delegate = self
+        registerForDraggedTypes([.string, .fileURL])
+        Self.registerServices()
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
         layout.setWrapWidth(wrapWidth(for: bounds.width))
@@ -320,7 +328,7 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
     }
 
     /// The caret position nearest to `point`: before or after the character under it.
-    private func insertionIndex(at point: CGPoint) -> Int {
+    func insertionIndex(at point: CGPoint) -> Int {
         let index = characterIndex(at: point)
         guard index < textStorage.length, textStorage.mutableString.character(at: index) != 0x0A else { return index }
         let rect = layoutRect(at: index)
@@ -615,6 +623,13 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
     /// Calls `body` with each screen row of `lines` that `range` touches:
     /// the row's start and end offsets, its CTLine and top, and whether the
     /// range continues past the row's end (a line break or a wrap).
+    /// Left and right x of the text between two offsets of a row's line,
+    /// whichever way it runs (right-to-left runs have them reversed).
+    func rowSpan(_ ctLine: CTLine, from: Int, to: Int) -> (CGFloat, CGFloat) {
+        let a = CTLineGetOffsetForStringIndex(ctLine, from, nil), b = CTLineGetOffsetForStringIndex(ctLine, to, nil)
+        return (min(a, b), max(a, b))
+    }
+
     func forEachRow(of range: NSRange, lines: [(line: Int, y: CGFloat)],
                             _ body: (_ start: Int, _ rowStart: Int, _ rowEnd: Int, _ ctLine: CTLine, _ top: CGFloat, _ continues: Bool) -> Void) {
         let origin = textOrigin
@@ -638,10 +653,8 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
         let origin = textOrigin
         forEachRow(of: range, lines: lines) { start, rowStart, rowEnd, ctLine, top, continues in
             let from = max(range.location, rowStart), to = min(range.upperBound, rowEnd)
-            let minX = CTLineGetOffsetForStringIndex(ctLine, from - start, nil)
-            let maxX = continues && toEdge ? bounds.width - textContainerInset.width - origin.x
-                : continues ? CTLineGetOffsetForStringIndex(ctLine, to - start, nil) + layout.spaceWidth
-                : CTLineGetOffsetForStringIndex(ctLine, to - start, nil)
+            var (minX, maxX) = rowSpan(ctLine, from: from - start, to: to - start)
+            if continues { maxX = toEdge ? bounds.width - textContainerInset.width - origin.x : maxX + layout.spaceWidth }
             guard maxX > minX else { return }
             CGRect(x: origin.x + minX, y: top, width: maxX - minX, height: lineHeight).fill()
         }
@@ -651,8 +664,7 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
         textColor.setFill()
         let origin = textOrigin
         forEachRow(of: range, lines: lines) { start, rowStart, rowEnd, ctLine, top, _ in
-            let minX = CTLineGetOffsetForStringIndex(ctLine, max(range.location, rowStart) - start, nil)
-            let maxX = CTLineGetOffsetForStringIndex(ctLine, min(range.upperBound, rowEnd) - start, nil)
+            let (minX, maxX) = rowSpan(ctLine, from: max(range.location, rowStart) - start, to: min(range.upperBound, rowEnd) - start)
             CGRect(x: origin.x + minX, y: top + layout.baseline + 2, width: max(maxX - minX, 1), height: 1).fill()
         }
     }
@@ -678,6 +690,11 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
         if let caret = caretFrame, caretVisible, caret.intersects(dirtyRect), window?.firstResponder === self {
             caretColor.setFill()
             caret.fill()
+        }
+        if let dropIndex {
+            let rect = layoutRect(at: dropIndex)
+            caretColor.setFill()
+            CGRect(x: rect.minX - 1, y: rect.minY, width: 2, height: rect.height).fill()
         }
     }
 
@@ -830,7 +847,8 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
         case #selector(paste(_:)): return isEditable && NSPasteboard.general.string(forType: .string) != nil
         case #selector(selectAll(_:)): return true
         case #selector(performTextFinderAction(_:)), #selector(performFindPanelAction(_:)):
-            return textFinder.validateAction(NSTextFinder.Action(rawValue: item.tag) ?? .showFindInterface)
+            let action = NSTextFinder.Action(rawValue: item.tag) ?? .showFindInterface
+            return withFindSelection(for: action) { textFinder.validateAction(action) }
         case #selector(toggleContinuousSpellChecking(_:)):
             (item as? NSMenuItem)?.state = isContinuousSpellCheckingEnabled ? .on : .off
             return true
@@ -841,7 +859,15 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
 
     open override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu()
-        addSpellingSuggestions(to: menu, at: convert(event.locationInWindow, from: nil))
+        let point = convert(event.locationInWindow, from: nil)
+        addSpellingSuggestions(to: menu, at: point)
+        if let word = lookUpRange(at: characterIndex(at: point)) {
+            let item = menu.addItem(withTitle: "Look Up “\(textStorage.attributedSubstring(from: word).string)”",
+                                    action: #selector(lookUpFromMenu(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = NSValue(range: word)
+            menu.addItem(.separator())
+        }
         menu.addItem(withTitle: "Cut", action: #selector(cut(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Copy", action: #selector(copy(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Paste", action: #selector(paste(_:)), keyEquivalent: "")
@@ -986,6 +1012,7 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
         window?.makeFirstResponder(self)
         if hasMarkedText(), inputContext?.handleEvent(event) == true { return }
         let point = convert(event.locationInWindow, from: nil)
+        if event.clickCount == 1, !event.modifierFlags.contains(.shift), beginDraggingSelection(with: event, at: point) { return }
         // Vim's normal mode puts the cursor on the character clicked.
         let index = showsBlockCursor ? characterIndex(at: point) : insertionIndex(at: point)
         let text = textStorage.mutableString

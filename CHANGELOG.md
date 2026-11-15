@@ -7,7 +7,12 @@
   (`isContinuousSpellCheckingEnabled`, `spellCheckingScope`, guesses in the
   context menu, Edit › Spelling and Grammar). `VimEditor.Configuration`
   gets `checksSpelling`. The find bar no longer covers the first lines,
-  and screen motions measure the text below it.
+  and screen motions measure the text below it. ⌘E with nothing selected
+  uses the word under the cursor.
+- macOS `VimTextView`: the Services menu, dragging text out and in (files
+  drop as paths), Look Up (force click, context menu), and right-to-left
+  text: lines are left-to-right paragraphs, character boxes, clicks and
+  selections follow the glyphs.
 - **Breaking:** `VimTextView` (macOS) is now an `NSView` that lays out and
   draws its text itself instead of an `NSTextView` on TextKit 2. Positions
   and the document height are exact, so the scroller no longer jumps or
