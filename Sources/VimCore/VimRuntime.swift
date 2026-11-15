@@ -15,12 +15,11 @@ public final class VimRuntime {
 
     /// Implementation that finds indentation blocks for folds (`zM`, `zc`,
     /// ``VimEngine/foldBlocks()``). The results are identical; Swift is the
-    /// fastest (VimKitBench runs 8–9: 0.62 ms on 20,000 lines, Goose 0.67 ms,
-    /// JavaScript 13 ms).
+    /// fastest (VimKitBench runs 8–9: 0.62 ms on 20,000 lines, JavaScript 13 ms).
     public var foldKernel: VimFoldKernel = .swift
 
-    /// Buffers of the native fold kernels, shared by this runtime's editors.
-    let foldScanner = VimFoldBlockScanner()
+    /// Buffers of the native fold kernel, shared by this runtime's editors.
+    @_spi(Benchmarks) public let foldScanner = VimFoldBlockScanner()
 
     /// Receives console output and JavaScript exceptions from the engine.
     /// By default warnings and errors are printed.

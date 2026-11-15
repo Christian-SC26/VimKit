@@ -1,22 +1,28 @@
 import Foundation
 import JavaScriptCore
-import VimGooseKernels
 
 /// Which implementation finds the indentation blocks that `zM`, `zc` and
-/// ``VimEngine/foldBlocks()`` use. All three give the same blocks; they
-/// differ in speed (compare them with VimKitBench).
+/// ``VimEngine/foldBlocks()`` use. Both give the same blocks; Swift is about
+/// 20 times faster (compare them with VimKitBench).
 public enum VimFoldKernel: String, Sendable, CaseIterable {
     /// The adapter's JavaScript, on the document's lines.
     case javascript
     /// Swift, on the document's UTF-16 text.
     case swift
-    /// Goose (Kernels/fold_blocks.goose) compiled to C, on the UTF-16 text.
-    case goose
 }
 
-/// Finds indentation blocks in UTF-16 text with the Swift or the Goose
-/// kernel. Keeps its buffers between calls.
+/// Finds indentation blocks in UTF-16 text natively. Keeps its buffers
+/// between calls.
 @_spi(Benchmarks) public final class VimFoldBlockScanner {
+    /// A native kernel: (text, tabSize, lastOf, stackLine, stackIndent) -> line count.
+    /// Writes, for every line, the last line of the block that starts on it, or -1.
+    public typealias Kernel = @Sendable (UnsafeBufferPointer<UInt16>, Int32, UnsafeMutableBufferPointer<Int32>,
+                               UnsafeMutableBufferPointer<Int32>, UnsafeMutableBufferPointer<Int32>) -> Int
+
+    /// Replaces the Swift kernel, so VimKitBench can measure another
+    /// language's kernel (Goose) through the same engine path.
+    public var kernelOverride: Kernel?
+
     private var lastOf: [Int32] = []
     private var stackLine: [Int32] = []
     private var stackIndent: [Int32] = []
@@ -24,8 +30,8 @@ public enum VimFoldKernel: String, Sendable, CaseIterable {
     public init() {}
 
     /// Blocks as flat `[header, last, header, last, ...]` line numbers, by header.
-    public func blocks(in text: UnsafeBufferPointer<UInt16>, tabSize: Int, kernel: VimFoldKernel) -> [Int32] {
-        let lines = scan(text, tabSize: tabSize, kernel: kernel)
+    public func blocks(in text: UnsafeBufferPointer<UInt16>, tabSize: Int) -> [Int32] {
+        let lines = scan(text, tabSize: tabSize)
         var flat: [Int32] = []
         for line in 0..<lines where lastOf[line] >= 0 {
             flat.append(Int32(line))
@@ -36,7 +42,7 @@ public enum VimFoldKernel: String, Sendable, CaseIterable {
 
     /// Runs the kernel only and returns the number of lines; for benchmarks.
     @discardableResult
-    public func scan(_ text: UnsafeBufferPointer<UInt16>, tabSize: Int, kernel: VimFoldKernel) -> Int {
+    public func scan(_ text: UnsafeBufferPointer<UInt16>, tabSize: Int) -> Int {
         var lines = 1
         for unit in text where unit == 0x0A { lines += 1 }
         if lastOf.count < lines {
@@ -45,20 +51,11 @@ public enum VimFoldKernel: String, Sendable, CaseIterable {
             stackIndent = lastOf
         }
         let tab = Int32(max(1, tabSize))
+        let kernel = kernelOverride ?? Self.scanSwift
         return lastOf.withUnsafeMutableBufferPointer { lastOf in
             stackLine.withUnsafeMutableBufferPointer { stackLine in
                 stackIndent.withUnsafeMutableBufferPointer { stackIndent in
-                    switch kernel {
-                    case .goose:
-                        GooseRuntime.start()
-                        func slice(_ buffer: UnsafeMutableBufferPointer<Int32>) -> sl_i32 {
-                            sl_i32(data: buffer.baseAddress, len: Int64(buffer.count))
-                        }
-                        let input = sl_u16(data: UnsafeMutablePointer(mutating: text.baseAddress), len: Int64(text.count))
-                        return Int(vimkit_fold_blocks(input, tab, slice(lastOf), slice(stackLine), slice(stackIndent)))
-                    case .swift, .javascript:
-                        return Self.scanSwift(text, tabSize: tab, lastOf: lastOf, stackLine: stackLine, stackIndent: stackIndent)
-                    }
+                    kernel(text, tab, lastOf, stackLine, stackIndent)
                 }
             }
         }
@@ -66,8 +63,8 @@ public enum VimFoldKernel: String, Sendable, CaseIterable {
 
     /// The Swift kernel; the same algorithm as Kernels/fold_blocks.goose and
     /// `$allBlocksJS` in vimkit-adapter.js.
-    static func scanSwift(_ text: UnsafeBufferPointer<UInt16>, tabSize: Int32, lastOf: UnsafeMutableBufferPointer<Int32>,
-                          stackLine: UnsafeMutableBufferPointer<Int32>, stackIndent: UnsafeMutableBufferPointer<Int32>) -> Int {
+    public static func scanSwift(_ text: UnsafeBufferPointer<UInt16>, _ tabSize: Int32, _ lastOf: UnsafeMutableBufferPointer<Int32>,
+                                 _ stackLine: UnsafeMutableBufferPointer<Int32>, _ stackIndent: UnsafeMutableBufferPointer<Int32>) -> Int {
         let n = text.count
         var depth = 0, prev: Int32 = -1, line: Int32 = 0, i = 0
         while true {
@@ -132,12 +129,6 @@ public enum VimFoldKernel: String, Sendable, CaseIterable {
     }
 }
 
-/// The Goose runtime is set up once, on the first call.
-enum GooseRuntime {
-    private static let started: Void = goose_init(0, nil)
-    static func start() { _ = started }
-}
-
 extension VimFoldBlockScanner {
     /// The adapter's `host.foldBlocks(text, tabSize)`: an `Int32Array` of
     /// `[header, last, ...]` from the native kernel, or null for JavaScript.
@@ -148,7 +139,7 @@ extension VimFoldBlockScanner {
         guard let string = JSValueToStringCopy(ctx, text.jsValueRef, nil) else { return JSValue(nullIn: context) }
         defer { JSStringRelease(string) }
         let flat = blocks(in: UnsafeBufferPointer(start: JSStringGetCharactersPtr(string), count: JSStringGetLength(string)),
-                          tabSize: tabSize, kernel: kernel)
+                          tabSize: tabSize)
         guard let array = JSObjectMakeTypedArray(ctx, kJSTypedArrayTypeInt32Array, flat.count, nil) else {
             return JSValue(nullIn: context)
         }

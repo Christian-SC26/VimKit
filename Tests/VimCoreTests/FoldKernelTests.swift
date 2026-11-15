@@ -1,5 +1,32 @@
 import Testing
 @_spi(Benchmarks) @testable import VimCore
+import VimGooseKernels
+
+/// Kernels under test: the library's two and the Goose one, which only the
+/// stand and these tests link.
+enum Kernel: CaseIterable {
+    case javascript, swift, goose
+
+    private static let gooseStarted: Void = goose_init(0, nil)
+
+    static let gooseKernel: VimFoldBlockScanner.Kernel = { text, tab, lastOf, stackLine, stackIndent in
+        _ = gooseStarted
+        func slice(_ buffer: UnsafeMutableBufferPointer<Int32>) -> sl_i32 {
+            sl_i32(data: buffer.baseAddress, len: Int64(buffer.count))
+        }
+        let input = sl_u16(data: UnsafeMutablePointer(mutating: text.baseAddress), len: Int64(text.count))
+        return Int(vimkit_fold_blocks(input, tab, slice(lastOf), slice(stackLine), slice(stackIndent)))
+    }
+
+    @MainActor func apply(to runtime: VimRuntime) {
+        runtime.foldKernel = self == .javascript ? .javascript : .swift
+        runtime.foldScanner.kernelOverride = self == .goose ? Self.gooseKernel : nil
+    }
+
+    func apply(to scanner: VimFoldBlockScanner) {
+        scanner.kernelOverride = self == .goose ? Self.gooseKernel : nil
+    }
+}
 
 /// The JavaScript, Swift and Goose fold kernels must find the same blocks.
 @MainActor
@@ -24,8 +51,8 @@ struct FoldKernelTests {
         "ы {\n    ünïcode 😀\n}",
     ]
 
-    private func blocks(_ engine: VimEngine, _ kernel: VimFoldKernel) -> [ClosedRange<Int>] {
-        engine.runtime.foldKernel = kernel
+    private func blocks(_ engine: VimEngine, _ kernel: Kernel) -> [ClosedRange<Int>] {
+        kernel.apply(to: engine.runtime)
         return engine.foldBlocks()
     }
 
@@ -44,8 +71,9 @@ struct FoldKernelTests {
         let js = blocks(VimEngine(text: text, runtime: VimRuntime()), .javascript)
         let scanner = VimFoldBlockScanner()
         let utf16 = Array(text.utf16)
-        for kernel in [VimFoldKernel.swift, .goose] {
-            let flat = utf16.withUnsafeBufferPointer { scanner.blocks(in: $0, tabSize: 4, kernel: kernel) }
+        for kernel in [Kernel.swift, .goose] {
+            kernel.apply(to: scanner)
+            let flat = utf16.withUnsafeBufferPointer { scanner.blocks(in: $0, tabSize: 4) }
             let ranges = stride(from: 0, to: flat.count - 1, by: 2).map { Int(flat[$0])...Int(flat[$0 + 1]) }
             #expect(ranges == js, "\(kernel) on \(text.debugDescription)")
         }
@@ -84,9 +112,9 @@ struct FoldKernelTests {
     @Test func zMFoldsTheSameWithEveryKernel() {
         let text = (0..<300).map { "func f\($0)() {\n    if x {\n        y\n    }\n}" }.joined(separator: "\n")
         var results: [[VimFold]] = []
-        for kernel in VimFoldKernel.allCases {
+        for kernel in Kernel.allCases {
             let runtime = VimRuntime()
-            runtime.foldKernel = kernel
+            kernel.apply(to: runtime)
             let engine = VimEngine(text: text, runtime: runtime)
             engine.feed("zM")
             results.append(engine.folds)

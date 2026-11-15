@@ -4,6 +4,25 @@ import Foundation
 @_spi(Benchmarks) import VimCore
 import VimKit
 
+/// Fold kernels the stand compares. Goose is not part of the libraries:
+/// it is plugged into `VimFoldBlockScanner` from here.
+enum BenchFoldKernel: String, CaseIterable {
+    case javascript, swift, goose
+
+    var label: String {
+        switch self {
+        case .javascript: "JavaScript"
+        case .swift: "Swift"
+        case .goose: "Goose"
+        }
+    }
+
+    @MainActor func apply(to runtime: VimRuntime) {
+        runtime.foldKernel = self == .javascript ? .javascript : .swift
+        runtime.foldScanner.kernelOverride = self == .goose ? GooseFoldKernel.kernel : nil
+    }
+}
+
 struct BenchResult: Codable, Sendable {
     var category: String
     var name: String
@@ -94,7 +113,7 @@ struct BenchOptions {
     var language = "JS"
     var note: String?
     var historyDirectory = "Benchmarks/history"
-    var foldKernel: VimFoldKernel = .swift
+    var foldKernel: BenchFoldKernel = .swift
 
     static func parse(_ arguments: [String]) -> BenchOptions {
         var options = BenchOptions()
@@ -115,7 +134,7 @@ struct BenchOptions {
             case "--history": options.historyDirectory = iterator.next() ?? options.historyDirectory
             case "--fold-kernel":
                 let name = iterator.next() ?? ""
-                guard let kernel = VimFoldKernel(rawValue: name == "js" ? "javascript" : name) else {
+                guard let kernel = BenchFoldKernel(rawValue: name == "js" ? "javascript" : name) else {
                     FileHandle.standardError.write(Data("--fold-kernel: js, swift или goose\n".utf8))
                     exit(2)
                 }
@@ -171,7 +190,7 @@ final class Runner {
         self.options = options
         runtime = VimRuntime()
         runtime.clipboard = InMemoryClipboard()
-        runtime.foldKernel = options.foldKernel
+        options.foldKernel.apply(to: runtime)
         runtime.log = { [weak self] level, message in
             guard level >= .warning, let self else { return }
             self.jsErrors += 1
@@ -254,30 +273,23 @@ final class Runner {
             let text = sampleCode(lines: lines)
             let utf16 = Array(text.utf16)
             utf16.withUnsafeBufferPointer { buffer in
-                for kernel in [VimFoldKernel.swift, .goose] {
-                    scanner.scan(buffer, tabSize: 4, kernel: kernel) // buffers sized, Goose runtime started
-                    record(measure(category: category, name: "чистый расчёт: \(Self.label(kernel))", keys: "",
+                for kernel in [BenchFoldKernel.swift, .goose] {
+                    scanner.kernelOverride = kernel == .goose ? GooseFoldKernel.kernel : nil
+                    scanner.scan(buffer, tabSize: 4) // buffers sized, Goose runtime started
+                    record(measure(category: category, name: "чистый расчёт: \(kernel.label)", keys: "",
                                    level: .engine, lines: lines, lifecycle: false, repeats: repeats(50),
-                                   operation: { scanner.scan(buffer, tabSize: 4, kernel: kernel) }))
+                                   operation: { scanner.scan(buffer, tabSize: 4) }))
                 }
             }
             let engine = VimEngine(text: text, runtime: runtime)
-            for kernel in VimFoldKernel.allCases {
-                runtime.foldKernel = kernel
+            for kernel in BenchFoldKernel.allCases {
+                kernel.apply(to: runtime)
                 _ = engine.foldBlocks()
-                record(measure(category: category, name: "foldBlocks(): \(Self.label(kernel))", keys: "",
+                record(measure(category: category, name: "foldBlocks(): \(kernel.label)", keys: "",
                                level: .engine, lines: lines, lifecycle: false, repeats: repeats(20),
                                operation: { _ = engine.foldBlocks() }))
             }
-            runtime.foldKernel = options.foldKernel
-        }
-    }
-
-    static func label(_ kernel: VimFoldKernel) -> String {
-        switch kernel {
-        case .javascript: "JavaScript"
-        case .swift: "Swift"
-        case .goose: "Goose"
+            options.foldKernel.apply(to: runtime)
         }
     }
 

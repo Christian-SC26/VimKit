@@ -14,11 +14,8 @@ let package = Package(
         .executable(name: "VimKitBench", targets: ["VimKitBench"]),
     ],
     targets: [
-        // C generated from Kernels/*.goose (Kernels/regenerate.sh).
-        .target(name: "VimGooseKernels", exclude: ["GENERATED.txt"]),
         .target(
             name: "VimCore",
-            dependencies: ["VimGooseKernels"],
             exclude: ["Resources/VENDORED.txt"],
             resources: [
                 .copy("Resources/vim.js"),
@@ -28,10 +25,13 @@ let package = Package(
         ),
         .target(name: "VimKit", dependencies: ["VimCore"]),
         .executableTarget(name: "VimKitDemo", dependencies: ["VimKit"]),
-        .executableTarget(name: "VimKitBench", dependencies: ["VimKit"]),
+        // C generated from Kernels/*.goose (Kernels/regenerate.sh). Only the
+        // stand and the tests use it: the libraries stay Swift and JavaScript.
+        .target(name: "VimGooseKernels", exclude: ["GENERATED.txt"]),
+        .executableTarget(name: "VimKitBench", dependencies: ["VimKit", "VimGooseKernels"]),
         .testTarget(
             name: "VimCoreTests",
-            dependencies: ["VimCore"],
+            dependencies: ["VimCore", "VimGooseKernels"],
             resources: [
                 .copy("Resources/vim_test.js"),
                 .copy("Resources/upstream-harness.js"),
