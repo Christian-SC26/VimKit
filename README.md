@@ -209,7 +209,7 @@ folds any lines, and `zd` / `zE` delete folds. Blocks are found by
 indentation; a closing bracket line at the header's indentation belongs to
 the block, so `func f() {` … `}` folds to its header line. `j` and `k` step
 over closed folds, and linewise operators (`dd`, `yy`, `>>`, `cc`, `3dd`)
-take a closed fold as one line. A search or jump into a fold opens it.
+take a closed fold as one line, and so does `V`. A search or jump into a fold opens it.
 Edits inside a fold keep it; an edit across its first or last line deletes
 it.
 
@@ -263,7 +263,7 @@ Planned:
 - [x] `tokenTypeAt` from text attributes (`.vimTokenType`)
 - [x] Code folding (`zc`, `zo`, `za`, `zM`, `zR`, `zf`)
 - [x] Linewise operators on a closed fold act on the whole fold
-- [ ] Visual line mode (`V`) selects a closed fold whole
+- [x] Visual line mode (`V`) selects a closed fold whole
 - [x] Block cursor drawn with inverted text instead of a translucent box
 
 ## License

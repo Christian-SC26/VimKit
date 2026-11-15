@@ -7,7 +7,7 @@
   `j`/`k` step over closed folds. `VimEngine.folds` and
   `vimEngineFoldsDidChange(_:)` for other hosts.
 - Linewise operators (`dd`, `yy`, `>>`, counts) take a closed fold as one
-  line; edits inside a fold keep it.
+  line, and so does visual line mode; edits inside a fold keep it.
 - The block cursor paints the character under it inverted.
 - `.vimTokenType` text attribute and `tokenTypeProvider` for syntax-aware
   `%` and `=` in the views.

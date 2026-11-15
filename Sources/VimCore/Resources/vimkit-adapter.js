@@ -591,6 +591,7 @@
   };
   proto.setSelections = function (ranges, primIndex) {
     var cm = this;
+    if (this.$folds.length && this.state.vim && this.state.vim.visualLine) this.$selectWholeFolds(ranges);
     this.$setSel(ranges.map(function (x) {
       return { anchor: cm.indexFromPos(x.anchor), head: cm.indexFromPos(x.head) };
     }), primIndex);
@@ -1311,6 +1312,19 @@
       if ((from < h && h < to) || (from < t && t < to) || (from <= h && t <= to && from < to)) this.$removeFold(f);
     }
     this.$foldChanged();
+  };
+  // An operator in visual line mode gets [first line, start of the line
+  // after the last]. When the last line is a closed fold's header, extend
+  // the range over the fold (in place: vim.js passes the same objects on to
+  // the operator).
+  proto.$selectWholeFolds = function (ranges) {
+    if (ranges.length != 1) return;
+    var r = ranges[0], headLast = r.head.line > r.anchor.line || (r.head.line == r.anchor.line && r.head.ch >= r.anchor.ch);
+    var end = headLast ? r.head : r.anchor;
+    var start = end === r.head ? r.anchor : r.head;
+    if (end.ch != 0 || end.line - 1 < start.line) return;
+    var last = this.$foldEnd(end.line - 1);
+    if (last > end.line - 1) end.line = last + 1;
   };
   // Last line of the closed fold whose header is `line`, or `line`.
   proto.$foldEnd = function (line) {

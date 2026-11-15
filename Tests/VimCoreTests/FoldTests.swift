@@ -96,6 +96,17 @@ struct FoldTests {
         #expect(vim.mode == .normal)
     }
 
+    @Test func visualLineTakesTheWholeFold() {
+        let vim = engine()
+        vim.feed("8GzcVd")
+        #expect(!vim.text.contains("three") && !vim.text.contains("func b"), "V on a closed fold selects all of it")
+        vim.feed("ggzcVjd")
+        #expect(vim.text.isEmpty || vim.text == "\n" || !vim.text.contains("two"), "V j from a fold header: the fold and the next line")
+        #expect(!vim.text.contains("func a"))
+        vim.feed("u")
+        #expect(vim.text.contains("func a"))
+    }
+
     @Test func searchOpensTheFoldItLandsIn() {
         let vim = engine()
         vim.feed("zM/three<CR>")
