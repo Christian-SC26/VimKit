@@ -108,10 +108,28 @@ struct FoldTests {
         vim.setCursor(line: 7, column: 0)
         vim.feed("zcggOnew<Esc>")
         #expect(hiddenLines(vim) == [[9, 10]], "a line added above moves the fold")
-        vim.feed("8GA!<Esc>")
+        vim.feed("9GA!<Esc>")
         #expect(hiddenLines(vim) == [[9, 10]], "typing on the header keeps it")
         vim.replaceCharacters(in: NSRange(location: (vim.text as NSString).range(of: "three").location, length: 0), with: "X")
-        #expect(vim.folds.isEmpty, "an edit inside the fold deletes it")
+        #expect(hiddenLines(vim) == [[9, 10]], "an edit inside the fold keeps it")
+        vim.feed("9Gdd")
+        #expect(!vim.text.contains("func b") && !vim.text.contains("three"), "dd on the header deletes the whole fold")
+        #expect(vim.folds.isEmpty)
+    }
+
+    @Test func linewiseOperatorsTakeTheWholeFold() {
+        let vim = engine()
+        vim.feed("zcyyGp")
+        #expect(vim.text.hasSuffix("}\nfunc a() {\n  if x {\n    one\n  }\n  two\n}"), "yy yanks the fold")
+        vim.feed("gg>>")
+        #expect(vim.text.hasPrefix("    func a() {\n      if x {\n        one"), ">> indents every line")
+        #expect(hiddenLines(vim).first == [1, 5], "and the fold stays closed")
+        vim.feed("2dd")
+        #expect(vim.text.hasPrefix("func b() {"), "2dd: the fold and the next line")
+        vim.feed("u")
+        vim.feed(":%s/one/ONE/<CR>")
+        #expect(vim.text.contains("ONE"))
+        #expect(vim.folds.isEmpty, ":s moves the cursor into the fold, which opens it")
     }
 
     @Test func setTextClearsFolds() {

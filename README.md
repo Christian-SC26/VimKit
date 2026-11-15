@@ -208,16 +208,15 @@ Or answer directly with `textView.tokenTypeProvider = { offset in ... }`.
 folds any lines, and `zd` / `zE` delete folds. Blocks are found by
 indentation; a closing bracket line at the header's indentation belongs to
 the block, so `func f() {` … `}` folds to its header line. `j` and `k` step
-over closed folds. A search or jump into a fold opens it, and an edit
-inside a fold deletes it.
+over closed folds, and linewise operators (`dd`, `yy`, `>>`, `cc`, `3dd`)
+take a closed fold as one line. A search or jump into a fold opens it.
+Edits inside a fold keep it; an edit across its first or last line deletes
+it.
 
 `VimTextView` and `VimUITextView` hide folded lines (through the text
 content storage delegate, which they set when it is free) and show
 "⋯ N lines" after the header. Other hosts read `VimEngine.folds` in
 `vimEngineFoldsDidChange(_:)`.
-
-Unlike Vim, an operator on a closed fold (`dd`, `yy`) acts on the header
-line only, and opens the fold.
 
 ## Demo
 
@@ -263,7 +262,8 @@ Planned:
 - [x] Syntax-aware `%` and text objects via a delegate hook
 - [x] `tokenTypeAt` from text attributes (`.vimTokenType`)
 - [x] Code folding (`zc`, `zo`, `za`, `zM`, `zR`, `zf`)
-- [ ] Operators on a closed fold act on the whole fold
+- [x] Linewise operators on a closed fold act on the whole fold
+- [ ] Visual line mode (`V`) selects a closed fold whole
 - [x] Block cursor drawn with inverted text instead of a translucent box
 
 ## License

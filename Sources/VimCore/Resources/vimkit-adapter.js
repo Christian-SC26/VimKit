@@ -1302,13 +1302,25 @@
     this.$folds = [];
     this.$foldChanged();
   };
-  // Called before an edit of [from, to] is applied.
+  // Called before an edit of [from, to] is applied. Edits inside a fold
+  // (`>>` on a closed fold, :s) keep it; an edit across its first or last
+  // line end (`dd` on the header) deletes it.
   proto.$foldsBeforeChange = function (from, to) {
     for (var i = this.$folds.length - 1; i >= 0; i--) {
-      var f = this.$folds[i];
-      if (from < f.tail.offset && to > f.head.offset) this.$removeFold(f);
+      var f = this.$folds[i], h = f.head.offset, t = f.tail.offset;
+      if ((from < h && h < to) || (from < t && t < to) || (from <= h && t <= to && from < to)) this.$removeFold(f);
     }
     this.$foldChanged();
+  };
+  // Last line of the closed fold whose header is `line`, or `line`.
+  proto.$foldEnd = function (line) {
+    if (!this.$folds.length) return line;
+    var spans = this.$hiddenLines();
+    for (var i = 0; i < spans.length; i++) {
+      if (spans[i][0] == line + 1) return spans[i][1];
+      if (spans[i][0] > line + 1) break;
+    }
+    return line;
   };
   // Closed folds as merged, sorted [firstHiddenLine, lastHiddenLine] pairs.
   proto.$hiddenLines = function () {
@@ -1994,6 +2006,12 @@
     return new Pos(start.line, start.ch);
   });
   Vim.mapCommand("zf", "operator", "vimkitFoldCreate", {}, {});
+  // Linewise operators (dd, yy, >>, cc...) take a closed fold as one line, as in Vim.
+  Vim.defineMotion("expandToLine", function (cm, head, motionArgs) {
+    var line = cm.$foldEnd(head.line), last = cm.lastLine();
+    for (var i = 1; i < motionArgs.repeat; i++) line = line < last ? cm.$foldEnd(line + 1) : line + 1;
+    return new Pos(line, Infinity);
+  });
 
   // Ex commands registered from Swift dispatch back to the editor's host.
   function defineHostEx(name, prefix) {
