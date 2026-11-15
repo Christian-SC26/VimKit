@@ -128,6 +128,43 @@ final class TextKit2Geometry {
         return nil
     }
 
+    // MARK: Folding
+
+    /// Text hidden by closed folds (whole paragraphs), sorted.
+    private(set) var hiddenRanges: [NSRange] = []
+
+    /// Whether the paragraph `element` is folded away. Called by the views'
+    /// `NSTextContentManagerDelegate`, which keeps such paragraphs out of layout.
+    func isHidden(_ element: NSTextElement) -> Bool {
+        guard !hiddenRanges.isEmpty, let range = element.elementRange else { return false }
+        let start = offset(of: range.location)
+        var lo = 0, hi = hiddenRanges.count - 1
+        while lo <= hi {
+            let mid = (lo + hi) / 2, hidden = hiddenRanges[mid]
+            if start < hidden.location { hi = mid - 1 }
+            else if start >= hidden.upperBound { lo = mid + 1 }
+            else { return true }
+        }
+        return false
+    }
+
+    /// Hides `ranges` and lays out again from the first change.
+    func setHidden(_ ranges: [NSRange]) {
+        guard ranges != hiddenRanges, let layoutManager, let content else { return }
+        let old = hiddenRanges
+        hiddenRanges = ranges
+        let common = zip(old, ranges).prefix { $0 == $1 }.count
+        let changes = [old.dropFirst(common).first, ranges.dropFirst(common).first].compactMap { $0 }
+        // From the start of the header line (the paragraph before the hidden ones).
+        let first = max(0, (changes.map(\.location).min() ?? 0) - 1)
+        if let start = content.location(content.documentRange.location, offsetBy: first),
+           let range = NSTextRange(location: start, end: content.documentRange.endLocation) {
+            layoutManager.invalidateLayout(for: range)
+        }
+        exactLayoutEnd = min(exactLayoutEnd, first)
+        layoutManager.textViewportLayoutController.layoutViewport()
+    }
+
     // MARK: Search highlight and block cursor
     //
     // Both are rendering attributes. The cursor paints its character with the

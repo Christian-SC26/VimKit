@@ -189,6 +189,41 @@ struct WindowScenarioTests {
         #expect(!editor.view.showsCursorBox)
     }
 
+    static let foldable = "func a() {\n  if x {\n    one\n  }\n  two\n}\n\nfunc b() {\n  three\n}"
+
+    @Test func closedFoldHidesItsLines() throws {
+        let text = Self.foldable as NSString
+        let editor = EditorWindow(text: Self.foldable)
+        let one = text.range(of: "one").location
+        let emptyLine = text.range(of: "}\n\n").location + 2
+        let header = try #require(editor.view.characterRect(at: 0))
+        #expect(editor.view.characterRect(at: one) != nil)
+        editor.type("zc")
+        #expect(editor.view.vim.folds.count == 1)
+        #expect(editor.view.characterRect(at: one) == nil, "folded text is not laid out")
+        let below = try #require(editor.view.characterRect(at: emptyLine))
+        #expect(abs(below.minY - header.maxY) < 2, "the line after the fold follows the header")
+        let placeholder = try #require(editor.view.foldPlaceholders.first)
+        #expect(placeholder.text == "⋯ 5 lines")
+        #expect(placeholder.frame.minX > header.maxX)
+        #expect(abs(placeholder.frame.midY - header.midY) < 2)
+        editor.type("j")
+        #expect(editor.view.vim.cursorOffset == emptyLine)
+        editor.type("kzo")
+        #expect(editor.view.characterRect(at: one) != nil)
+        #expect(editor.view.foldPlaceholders.isEmpty)
+        #expect(inSync(editor))
+    }
+
+    @Test func foldsInALargeFile() throws {
+        let editor = EditorWindow(text: sampleCode(lines: 3_000).replacingOccurrences(of: "    let value9 ", with: "func f() {\n    let value9 "))
+        let start = ContinuousClock.now
+        editor.type("zMGzRgg")
+        #expect(ContinuousClock.now - start < .seconds(5))
+        #expect(editor.view.vim.folds.isEmpty)
+        #expect(inSync(editor))
+    }
+
     @Test func tokenTypeAttributeGuidesPercent() {
         let editor = EditorWindow(text: "(a \")\" b)")
         editor.view.textStorage?.addAttribute(.vimTokenType, value: VimTokenType.string, range: NSRange(location: 3, length: 3))

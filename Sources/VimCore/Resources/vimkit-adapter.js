@@ -435,6 +435,10 @@
     this.$subMode = "";
     this.virtualSelection = null;
     this.headlessScroll = { left: 0, top: 0 };
+    this.$folds = [];
+    this.$foldCache = null;
+    this.$foldDirty = false;
+    this.$sentFolds = "";
     this.inputField = new VNode("textarea");
     this.wrapper = new VNode("div");
     this.dialog = null;
@@ -632,6 +636,7 @@
     if (from === to && !text) return;
     var removed = this.doc.slice(from, to);
     var selBefore = this.sel.ranges.map(function (r) { return { anchor: r.anchor, head: r.head }; });
+    if (this.$folds.length) this.$foldsBeforeChange(from, to);
     this.doc.replace(from, to, text);
     var n = text.length;
 
@@ -767,6 +772,7 @@
     this.$afterDispatch();
   };
   proto.setValue = function (text) {
+    this.$clearFolds();
     this.$layoutCache = null;
     this.doc.setText(text);
     this.history.clear();
@@ -838,6 +844,7 @@
   proto.onBeforeEndOperation = function () {
     var op = this.curOp, scroll = false, pendingScroll = op && op.$scroll;
     this.$ending = true;
+    if (this.$folds.length) this.$revealCursor();
     try {
       if (op) {
         if (op.change) signalTo(op.changeHandlers, this, op.change);
@@ -856,6 +863,7 @@
   };
   proto.$flush = function () {
     this.$flushEdits();
+    this.$sendFolds();
     if (this.$selDirty) {
       this.$selDirty = false;
       var flat = [];
@@ -1248,7 +1256,229 @@
     return type || "";
   };
   proto.getMode = function () { return { name: this.getOption("mode") }; };
-  proto.foldCode = function () {};
+  // ---- folding -------------------------------------------------------------------
+  //
+  // A fold is a line range [header, last]. While closed, lines header+1..last
+  // are hidden and the header line stands for the whole fold. Folds are kept
+  // as two markers (end of the header line, end of the last line), so edits
+  // around them move them; an edit that touches the hidden lines deletes the
+  // fold. zc and zM find blocks by indentation (a block also takes a closing
+  // bracket line at the header's indentation); zf{motion} folds any lines.
+  // Closed folds are sent to the host as hidden ranges.
+
+  proto.$foldLines = function (f) {
+    return { header: this.posFromIndex(f.head.offset).line, last: this.posFromIndex(f.tail.offset).line };
+  };
+  proto.$foldChanged = function () {
+    this.$foldCache = null;
+    this.$layoutCache = null;
+    this.$foldDirty = true;
+  };
+  proto.$addFold = function (header, last, closed) {
+    if (last <= header) return null;
+    for (var i = 0; i < this.$folds.length; i++) {
+      var f = this.$folds[i], l = this.$foldLines(f);
+      if (l.header == header && l.last == last) { f.closed = closed; this.$foldChanged(); return f; }
+    }
+    var fold = {
+      head: new Marker(this, this.indexFromPos(new Pos(header, this.getLine(header).length)), 1),
+      tail: new Marker(this, this.indexFromPos(new Pos(last, this.getLine(last).length)), -1),
+      closed: closed
+    };
+    this.$folds.push(fold);
+    this.$foldChanged();
+    return fold;
+  };
+  proto.$removeFold = function (f) {
+    var i = this.$folds.indexOf(f);
+    if (i < 0) return;
+    this.$folds.splice(i, 1);
+    f.head.clear();
+    f.tail.clear();
+    this.$foldChanged();
+  };
+  proto.$clearFolds = function () {
+    if (!this.$folds.length) return;
+    this.$folds = [];
+    this.$foldChanged();
+  };
+  // Called before an edit of [from, to] is applied.
+  proto.$foldsBeforeChange = function (from, to) {
+    for (var i = this.$folds.length - 1; i >= 0; i--) {
+      var f = this.$folds[i];
+      if (from < f.tail.offset && to > f.head.offset) this.$removeFold(f);
+    }
+    this.$foldChanged();
+  };
+  // Closed folds as merged, sorted [firstHiddenLine, lastHiddenLine] pairs.
+  proto.$hiddenLines = function () {
+    if (this.$foldCache) return this.$foldCache;
+    var spans = [];
+    for (var i = 0; i < this.$folds.length; i++) {
+      if (!this.$folds[i].closed) continue;
+      var l = this.$foldLines(this.$folds[i]);
+      if (l.last > l.header) spans.push([l.header + 1, l.last]);
+    }
+    spans.sort(function (a, b) { return a[0] - b[0] || b[1] - a[1]; });
+    var merged = [];
+    spans.forEach(function (s) {
+      var top = merged[merged.length - 1];
+      if (top && s[0] <= top[1]) top[1] = Math.max(top[1], s[1]);
+      else merged.push([s[0], s[1]]);
+    });
+    return (this.$foldCache = merged);
+  };
+  proto.$isHidden = function (line) {
+    var spans = this.$hiddenLines(), lo = 0, hi = spans.length - 1;
+    while (lo <= hi) {
+      var mid = (lo + hi) >> 1;
+      if (line < spans[mid][0]) hi = mid - 1;
+      else if (line > spans[mid][1]) lo = mid + 1;
+      else return true;
+    }
+    return false;
+  };
+  // Folds containing `line` (header..last), innermost first.
+  proto.$foldsAt = function (line) {
+    var cm = this, out = [];
+    this.$folds.forEach(function (f) {
+      var l = cm.$foldLines(f);
+      if (l.header <= line && line <= l.last) out.push({ fold: f, header: l.header, last: l.last });
+    });
+    out.sort(function (a, b) { return (a.last - a.header) - (b.last - b.header); });
+    return out;
+  };
+
+  proto.$indentOf = function (line) {
+    var text = this.getLine(line);
+    if (!/\S/.test(text)) return null;
+    return countColumn(text.match(/^\s*/)[0], this.options.tabSize);
+  };
+  function isClosingLine(text) { return /^\s*([\]\)\}]|end\b)/.test(text); }
+  // The block whose header is `header`, or null.
+  proto.$blockFrom = function (header) {
+    var indent = this.$indentOf(header), lastLine = this.lastLine();
+    if (indent == null) return null;
+    var last = header, i = header + 1;
+    for (; i <= lastLine; i++) {
+      var d = this.$indentOf(i);
+      if (d == null) continue;
+      if (d <= indent) break;
+      last = i;
+    }
+    if (i <= lastLine && this.$indentOf(i) == indent && isClosingLine(this.getLine(i))) last = i;
+    return last > header ? { header: header, last: last } : null;
+  };
+  // The innermost block that contains `line` without starting on it.
+  proto.$blockAround = function (line) {
+    var indent = this.$indentOf(line), lastLine = this.lastLine();
+    for (var n = line + 1; indent == null && n <= lastLine; n++) indent = this.$indentOf(n);
+    if (indent == null) return null;
+    var closing = isClosingLine(this.getLine(line));
+    for (var h = line - 1; h >= 0; h--) {
+      var d = this.$indentOf(h);
+      if (d == null || d > indent || (d == indent && !closing)) continue;
+      var block = this.$blockFrom(h);
+      if (block && block.last >= line) return block;
+      if (d < indent) indent = d;
+    }
+    return null;
+  };
+  proto.$blockAt = function (line) {
+    return this.$blockFrom(line) || this.$blockAround(line);
+  };
+
+  // zo zO zc za zR zM zE zd zD
+  proto.$foldCommand = function (op) {
+    var cur = this.getCursor(), line = cur.line, cm = this;
+    var around = this.$foldsAt(line);
+    var closedHere = around.filter(function (a) { return a.fold.closed && a.header == line; });
+    var outerClosed = closedHere[closedHere.length - 1];
+    if (op == "toggle") op = outerClosed ? "open" : "close";
+    switch (op) {
+      case "open":
+        if (outerClosed) outerClosed.fold.closed = false;
+        break;
+      case "openAll":
+        around.forEach(function (a) { a.fold.closed = false; });
+        break;
+      case "close":
+        // The innermost of: open folds around the cursor, the block around it.
+        var open = around.filter(function (a) { return !a.fold.closed; })[0];
+        var block = outerClosed ? this.$blockAround(line) : this.$blockAt(line);
+        if (block && (!open || block.last - block.header < open.last - open.header)) {
+          // A fold for this block may exist already (opened earlier).
+          open = { fold: this.$addFold(block.header, block.last, true), header: block.header };
+        }
+        if (!open) return;
+        open.fold.closed = true;
+        if (open.header != line) this.setCursor(new Pos(open.header, Math.min(cur.ch, this.getLine(open.header).length)));
+        break;
+      case "openEverything":
+        this.$folds.forEach(function (f) { f.closed = false; });
+        break;
+      case "closeEverything":
+        this.$folds.forEach(function (f) { f.closed = true; });
+        for (var n = 0; n <= this.lastLine(); n++) {
+          var b = this.$blockFrom(n);
+          if (b) this.$addFold(b.header, b.last, true);
+        }
+        var top = this.$hiddenLines().filter(function (s) { return s[0] <= line && line <= s[1]; })[0];
+        if (top) this.setCursor(new Pos(top[0] - 1, 0));
+        break;
+      case "delete":
+        var target = outerClosed || around[0];
+        if (target) this.$removeFold(target.fold);
+        break;
+      case "deleteAll":
+        around.forEach(function (a) { cm.$removeFold(a.fold); });
+        break;
+      case "eliminate":
+        this.$clearFolds();
+        break;
+    }
+    this.$foldChanged();
+  };
+  // CodeMirror API (used by the upstream tests): toggles the fold starting on pos.line.
+  proto.foldCode = function (pos, options, force) {
+    var line = typeof pos == "number" ? pos : pos.line, cm = this;
+    var existing = this.$folds.filter(function (f) { return cm.$foldLines(f).header == line; })[0];
+    if (existing) {
+      existing.closed = force == "fold" ? true : force == "unfold" ? false : !existing.closed;
+      this.$foldChanged();
+    } else if (force != "unfold") {
+      var block = this.$blockFrom(line);
+      if (block) this.$addFold(block.header, block.last, true);
+    }
+    if (!this.curOp) this.$flush();
+  };
+  proto.isFolded = function (pos) {
+    var line = pos.line, cm = this;
+    return this.$folds.some(function (f) { return f.closed && cm.$foldLines(f).header == line; });
+  };
+  // A cursor that ends up in hidden lines (search, G, marks...) opens the folds around it.
+  proto.$revealCursor = function () {
+    var line = this.posFromIndex(this.$primary().head).line;
+    if (!this.$isHidden(line)) return;
+    this.$foldsAt(line).forEach(function (a) { if (a.header < line) a.fold.closed = false; });
+    this.$foldChanged();
+  };
+  // Sends closed folds as [hiddenStart, hiddenEnd, lineCount, ...]: the hidden
+  // lines (from the start of the first to the start of the line after the last).
+  proto.$sendFolds = function () {
+    if (!this.$foldDirty) return;
+    this.$foldDirty = false;
+    var flat = [], doc = this.doc, len = doc.getLength(), lastLine = this.lastLine();
+    this.$hiddenLines().forEach(function (s) {
+      var start = doc.lineStart(s[0]);
+      var end = s[1] >= lastLine ? len : doc.lineStart(s[1] + 1);
+      flat.push(start, end, s[1] - s[0] + 1);
+    });
+    var key = flat.join(",");
+    if (key === this.$sentFolds) return;
+    this.$sentFolds = key;
+    if (this.host.folds) this.host.folds(flat);
+  };
 
   // ---- view geometry ----------------------------------------------------------------
   //
@@ -1264,8 +1494,11 @@
     var cols = this.$cols();
     if (this.$layoutCache && this.$layoutCache.cols === cols) return this.$layoutCache;
     var lines = this.doc.lines, prefix = new Array(lines.length), total = 0;
+    var hidden = this.$folds.length ? this.$hiddenLines() : [], span = 0;
     for (var i = 0; i < lines.length; i++) {
       prefix[i] = total;
+      while (span < hidden.length && hidden[span][1] < i) span++;
+      if (span < hidden.length && hidden[span][0] <= i) continue; // folded away
       total += cols === Infinity ? 1 : Math.max(1, Math.ceil(lines[i].length / cols));
     }
     return (this.$layoutCache = { cols: cols, prefix: prefix, total: total });
@@ -1276,7 +1509,7 @@
   // Screen row (global) and column of an offset.
   proto.$visual = function (offset) {
     var layout = this.$layout(), pos = this.posFromIndex(offset);
-    var r = layout.cols === Infinity ? 0 : Math.min(Math.floor(pos.ch / layout.cols), this.$rowsOf(pos.line, layout) - 1);
+    var r = layout.cols === Infinity ? 0 : Math.max(0, Math.min(Math.floor(pos.ch / layout.cols), this.$rowsOf(pos.line, layout) - 1));
     return { row: layout.prefix[pos.line] + r, col: pos.ch - (layout.cols === Infinity ? 0 : r * layout.cols), line: pos.line, r: r };
   };
   proto.$offsetAtVisual = function (row, col) {
@@ -1715,10 +1948,12 @@
     this.$layoutCache = null;
     this.doc.setText(text);
     this.history.clear();
+    this.$clearFolds();
     this.marks = Object.create(null);
     var o = Math.min(head, this.doc.getLength());
     this.$setSel([{ anchor: o, head: o }], 0, true);
     this.curOp = null;
+    this.$sendFolds();
     this.$emitState();
   };
   proto.cursorOffset = function () { return this.$primary().head; };
@@ -1743,6 +1978,22 @@
 
   var Vim = global.initVim(CodeMirror);
   CodeMirror.Vim = Vim;
+
+  // Folding keys (codemirror-vim leaves them to the editor).
+  Vim.defineAction("vimkitFold", function (cm, args) { cm.$foldCommand(args.op); });
+  [["zo", "open"], ["zO", "openAll"], ["zc", "close"], ["zC", "close"], ["za", "toggle"], ["zA", "toggle"],
+   ["zR", "openEverything"], ["zM", "closeEverything"], ["zd", "delete"], ["zD", "deleteAll"], ["zE", "eliminate"]
+  ].forEach(function (k) {
+    Vim.mapCommand(k[0], "action", "vimkitFold", { op: k[1] }, { context: "normal" });
+  });
+  Vim.defineOperator("vimkitFoldCreate", function (cm, args, ranges) {
+    var a = ranges[0].anchor, h = ranges[0].head;
+    var start = a.line < h.line || (a.line == h.line && a.ch <= h.ch) ? a : h, end = start === a ? h : a;
+    var last = end.ch == 0 && end.line > start.line ? end.line - 1 : end.line;
+    cm.$addFold(start.line, last, true);
+    return new Pos(start.line, start.ch);
+  });
+  Vim.mapCommand("zf", "operator", "vimkitFoldCreate", {}, {});
 
   // Ex commands registered from Swift dispatch back to the editor's host.
   function defineHostEx(name, prefix) {
@@ -1787,7 +2038,7 @@
         ex: function () {}, coords: function () { return []; }, offsetAt: function () { return -1; },
         scrollInfo: function () { return []; }, scrollTo: function () {}, scrollIntoView: function () {},
         moveVertically: function () { return -1; }, lineBoundary: function () { return -1; },
-        lineHeight: function () { return 0; }
+        lineHeight: function () { return 0; }, edits: function () {}, tokenType: function () { return ""; }
       };
       var cm = this.createEditor(silent, "");
       try { Vim.handleEx(cm, command); } finally { cm.destroy(); }

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Folding: `zc`, `zo`, `za`, `zM`, `zR`, `zf{motion}`, `zd`, `zE`. Blocks are
+  found by indentation. The views hide folded lines and show "⋯ N lines";
+  `j`/`k` step over closed folds. `VimEngine.folds` and
+  `vimEngineFoldsDidChange(_:)` for other hosts.
+- The block cursor paints the character under it inverted.
+- `.vimTokenType` text attribute and `tokenTypeProvider` for syntax-aware
+  `%` and `=` in the views.
+- codemirror-vim suite: 714 of 716 (the folding tests now pass).
+
 ## 0.1.0 — 2026-11-15
 
 First release.

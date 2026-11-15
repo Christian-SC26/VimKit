@@ -159,6 +159,21 @@ public enum VimTokenType: String, Sendable {
     case string, comment
 }
 
+/// A closed fold: lines the view should hide (`zc`, `zM`, `zf`...).
+public struct VimFold: Equatable, Sendable {
+    /// The hidden lines, from the start of the first one to the start of the
+    /// line after the last (or the end of the text). The fold's header line,
+    /// which stays visible, ends just before it.
+    public var hiddenRange: NSRange
+    /// Number of hidden lines.
+    public var lineCount: Int
+
+    public init(hiddenRange: NSRange, lineCount: Int) {
+        self.hiddenRange = hiddenRange
+        self.lineCount = lineCount
+    }
+}
+
 /// Mode a mapping applies to.
 public enum VimMapMode: String, Sendable {
     case normal, insert, visual

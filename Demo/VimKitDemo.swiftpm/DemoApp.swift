@@ -81,6 +81,7 @@ struct DemoView: View {
       :%s/needle/thread/g<CR>             ex commands
       :w<CR>                              save callback (see the toolbar)
       u  <C-r>  ⌘Z                        undo / redo
+      zc zo za  zM zR  zf2j               folds
 
     With the on-screen keyboard, letters typed in normal mode are commands:
     tap i to type, and use the toolbar toggle to turn Vim off.

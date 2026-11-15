@@ -122,6 +122,7 @@ struct DemoView: View {
       :%s/needle/thread/g<CR>             ex commands
       :w<CR>                              save callback (see the toolbar)
       u  <C-r>                            undo / redo
+      zc zo za  zM zR  zf2j               folds
 
     Non-Latin keyboard layouts work for commands: physical keys are used.
 

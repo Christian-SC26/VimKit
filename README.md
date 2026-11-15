@@ -201,6 +201,24 @@ textStorage.addAttribute(.vimTokenType, value: VimTokenType.comment, range: comm
 
 Or answer directly with `textView.tokenTypeProvider = { offset in ... }`.
 
+### Folding
+
+`zc` closes the block around the cursor, `zo` opens it, `za` toggles,
+`zM` / `zR` close and open everything, `zf{motion}` (or `zf` in visual mode)
+folds any lines, and `zd` / `zE` delete folds. Blocks are found by
+indentation; a closing bracket line at the header's indentation belongs to
+the block, so `func f() {` … `}` folds to its header line. `j` and `k` step
+over closed folds. A search or jump into a fold opens it, and an edit
+inside a fold deletes it.
+
+`VimTextView` and `VimUITextView` hide folded lines (through the text
+content storage delegate, which they set when it is free) and show
+"⋯ N lines" after the header. Other hosts read `VimEngine.folds` in
+`vimEngineFoldsDidChange(_:)`.
+
+Unlike Vim, an operator on a closed fold (`dd`, `yy`) acts on the header
+line only, and opens the fold.
+
 ## Demo
 
 macOS:
@@ -244,7 +262,8 @@ Planned:
 - [x] Run codemirror-vim's own test suite against the adapter
 - [x] Syntax-aware `%` and text objects via a delegate hook
 - [x] `tokenTypeAt` from text attributes (`.vimTokenType`)
-- [ ] Code folding (`zc`, `zo`)
+- [x] Code folding (`zc`, `zo`, `za`, `zM`, `zR`, `zf`)
+- [ ] Operators on a closed fold act on the whole fold
 - [x] Block cursor drawn with inverted text instead of a translucent box
 
 ## License

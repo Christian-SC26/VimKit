@@ -185,6 +185,26 @@ struct VimUITextViewTests {
         #expect(view.tintColor != .clear)
     }
 
+    @Test func closedFoldHidesItsLines() throws {
+        let code = "func a() {\n  if x {\n    one\n  }\n  two\n}\n\nfunc b() {\n  three\n}"
+        let (_, view) = makeView(code)
+        let text = code as NSString
+        let one = text.range(of: "one").location
+        let emptyLine = text.range(of: "}\n\n").location + 2
+        #expect((view.textLayoutManager?.textContentManager as? NSTextContentStorage)?.delegate === view)
+        let header = try #require(view.characterRect(at: 0))
+        type(view, "zc")
+        #expect(view.characterRect(at: one) == nil, "folded text is not laid out")
+        let below = try #require(view.characterRect(at: emptyLine))
+        #expect(abs(below.minY - header.maxY) < 2)
+        #expect(view.foldPlaceholders.first?.text == "⋯ 5 lines")
+        type(view, "j")
+        #expect(view.vim.cursorOffset == emptyLine)
+        type(view, "kzo")
+        #expect(view.characterRect(at: one) != nil)
+        #expect(view.foldPlaceholders.isEmpty)
+    }
+
     @Test func disabledViewIsPlainTextView() {
         let (_, view) = makeView("abc")
         view.isVimEnabled = false

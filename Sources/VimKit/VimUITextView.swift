@@ -25,6 +25,7 @@ open class VimUITextView: UITextView {
                 vim.setText(text ?? "")
                 forwardSelection()
             }
+            applyFolds()
             updateCursorAppearance()
             updateSearchHighlight()
         }
@@ -59,6 +60,8 @@ open class VimUITextView: UITextView {
     private var pendingSelection = false
     private var flushScheduled = false
     private let blockCursor = UIView()
+    private var foldLabels: [UILabel] = []
+    private var foldLabelWidth: CGFloat = -1
     private let geometry = TextKit2Geometry()
     private var consumedPresses: Set<ObjectIdentifier> = []
     private var repeatingPress: ObjectIdentifier?
@@ -93,6 +96,10 @@ open class VimUITextView: UITextView {
         blockCursor.isUserInteractionEnabled = false
         blockCursor.isHidden = true
         addSubview(blockCursor)
+        // Folded lines are left out of layout by the content storage delegate.
+        if let storage = textLayoutManager?.textContentManager as? NSTextContentStorage, storage.delegate == nil {
+            storage.delegate = self
+        }
         NotificationCenter.default.addObserver(
             self, selector: #selector(vimTextStorageDidProcessEditing(_:)),
             name: NSTextStorage.didProcessEditingNotification, object: textStorage
@@ -300,9 +307,15 @@ open class VimUITextView: UITextView {
 
     // MARK: Cursor
 
+    open override func didMoveToSuperview() {
+        super.didMoveToSuperview()
+        updateCursorAppearance()
+    }
+
     open override func layoutSubviews() {
         super.layoutSubviews()
         if subviews.last !== blockCursor { bringSubviewToFront(blockCursor) }
+        if !foldLabels.isEmpty, bounds.width != foldLabelWidth { updateFoldLabels() }
         updateBlockCursor()
     }
 
@@ -318,8 +331,14 @@ open class VimUITextView: UITextView {
         if tintColor != tint { tintColor = tint }
         // The character under the cursor is painted inverted; the box is only
         // drawn where there is no character (line ends).
-        blockCursor.backgroundColor = caretColor
+        blockCursor.backgroundColor = resolvedCaretColor
         updateBlockCursor()
+    }
+
+    /// `caretColor`, with `.tintColor` taken from the superview: this view's
+    /// own tint is cleared in normal mode to hide the system caret.
+    private var resolvedCaretColor: UIColor {
+        caretColor == .tintColor ? (superview?.tintColor ?? .systemBlue) : caretColor
     }
 
     /// Where the block cursor is drawn (content coordinates), or nil when hidden.
@@ -339,16 +358,16 @@ open class VimUITextView: UITextView {
         guard showsBlockCursor, let rect = characterRect(at: offset) else {
             blockCursorFrame = nil
             blockCursor.isHidden = true
-            geometry.setCursor(nil, background: caretColor, foreground: cursorTextColor)
+            geometry.setCursor(nil, background: resolvedCaretColor, foreground: cursorTextColor)
             return
         }
         blockCursorFrame = rect
         let text = (text ?? "") as NSString
         if offset < text.length, ![0x0A, 0x0D].contains(text.character(at: offset)) {
-            geometry.setCursor(text.rangeOfComposedCharacterSequence(at: offset), background: caretColor, foreground: cursorTextColor)
+            geometry.setCursor(text.rangeOfComposedCharacterSequence(at: offset), background: resolvedCaretColor, foreground: cursorTextColor)
             blockCursor.isHidden = true
         } else {
-            geometry.setCursor(nil, background: caretColor, foreground: cursorTextColor)
+            geometry.setCursor(nil, background: resolvedCaretColor, foreground: cursorTextColor)
             blockCursor.frame = rect.integral
             blockCursor.isHidden = false
         }
@@ -388,6 +407,49 @@ open class VimUITextView: UITextView {
     public func characterIndex(at point: CGPoint) -> Int {
         let origin = containerOrigin
         return geometry.characterIndex(at: CGPoint(x: point.x - origin.x, y: point.y - origin.y), text: (text ?? "") as NSString)
+    }
+
+    // MARK: Folding
+
+    private func applyFolds() {
+        geometry.setHidden(isVimEnabled ? vim.folds.map(\.hiddenRange) : [])
+        updateFoldLabels()
+        updateBlockCursor()
+    }
+
+    /// A "⋯ N lines" label after each closed fold's header line.
+    private func updateFoldLabels() {
+        let folds = isVimEnabled ? vim.folds : []
+        foldLabelWidth = bounds.width
+        while foldLabels.count > folds.count { foldLabels.removeLast().removeFromSuperview() }
+        while foldLabels.count < folds.count {
+            let label = UILabel()
+            label.backgroundColor = .tertiarySystemFill
+            label.textColor = .secondaryLabel
+            label.textAlignment = .center
+            label.layer.cornerRadius = 4
+            label.clipsToBounds = true
+            insertSubview(label, belowSubview: blockCursor)
+            foldLabels.append(label)
+        }
+        let labelFont = UIFont.monospacedSystemFont(ofSize: effectiveFont.pointSize * 0.85, weight: .regular)
+        for (fold, label) in zip(folds, foldLabels) {
+            guard let header = characterRect(at: fold.hiddenRange.location - 1) else {
+                label.isHidden = true
+                continue
+            }
+            label.font = labelFont
+            label.text = fold.placeholder
+            let fitted = label.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: header.height))
+            let size = CGSize(width: fitted.width + 10, height: min(fitted.height + 2, header.height))
+            label.frame = CGRect(x: header.maxX + spaceWidth, y: header.midY - size.height / 2, width: size.width, height: size.height).integral
+            label.isHidden = false
+        }
+    }
+
+    /// Placeholders of the closed folds, for tests.
+    var foldPlaceholders: [(text: String, frame: CGRect)] {
+        foldLabels.filter { !$0.isHidden }.map { ($0.text ?? "", $0.frame) }
     }
 
     private func updateSearchHighlight() {
@@ -503,9 +565,25 @@ extension VimUITextView: VimEngineDelegate {
 
     public func vimEngineLineHeight(_ engine: VimEngine) -> CGFloat? { lineHeight }
 
+    public func vimEngineFoldsDidChange(_ engine: VimEngine) { applyFolds() }
+
     public func vimEngine(_ engine: VimEngine, tokenTypeAt offset: Int) -> VimTokenType? {
         if let tokenTypeProvider { return tokenTypeProvider(offset) }
         return VimTokenType.at(offset - 1, in: textStorage)
+    }
+}
+
+// MARK: - Folding
+
+extension VimUITextView: NSTextContentStorageDelegate {
+    public nonisolated func textContentManager(
+        _ textContentManager: NSTextContentManager,
+        shouldEnumerate textElement: NSTextElement,
+        options: NSTextContentManager.EnumerationOptions
+    ) -> Bool {
+        // Layout runs on the main thread.
+        nonisolated(unsafe) let element = textElement
+        return MainActor.assumeIsolated { !geometry.isHidden(element) }
     }
 }
 #endif

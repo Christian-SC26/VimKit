@@ -45,6 +45,8 @@ public protocol VimEngineDelegate: AnyObject {
     /// Whether the character just before `offset` is inside a string or comment.
     /// Return nil when the host has no syntax information.
     func vimEngine(_ engine: VimEngine, tokenTypeAt offset: Int) -> VimTokenType?
+    /// Folds were closed, opened or moved; hide ``VimEngine/folds``.
+    func vimEngineFoldsDidChange(_ engine: VimEngine)
 }
 
 public extension VimEngineDelegate {
@@ -66,6 +68,7 @@ public extension VimEngineDelegate {
     func vimEngine(_ engine: VimEngine, screenLineBoundaryFrom offset: Int, forward: Bool) -> Int? { nil }
     func vimEngineLineHeight(_ engine: VimEngine) -> CGFloat? { nil }
     func vimEngine(_ engine: VimEngine, tokenTypeAt offset: Int) -> VimTokenType? { nil }
+    func vimEngineFoldsDidChange(_ engine: VimEngine) {}
 }
 
 /// One Vim-enabled document.
@@ -81,6 +84,9 @@ public final class VimEngine {
     public weak var delegate: (any VimEngineDelegate)?
     public let runtime: VimRuntime
     public private(set) var status = VimStatus()
+
+    /// Closed folds, sorted and not overlapping. Text in them should be hidden.
+    public private(set) var folds: [VimFold] = []
 
     /// Called after ``status`` changes, in addition to the delegate.
     public var onStatusChange: ((VimStatus) -> Void)?
@@ -306,6 +312,17 @@ public final class VimEngine {
             return self.delegate?.vimEngine(self, tokenTypeAt: Int(offset))?.rawValue ?? ""
         }
 
+        // [hiddenStart, hiddenEnd, lineCount, ...]
+        let folds: @convention(block) (JSValue) -> Void = { [weak self] value in
+            guard let self else { return }
+            let flat = (value.toArray() as? [NSNumber])?.map(\.intValue) ?? []
+            self.folds = stride(from: 0, to: flat.count - 2, by: 3).map {
+                VimFold(hiddenRange: NSRange(location: flat[$0], length: flat[$0 + 1] - flat[$0]), lineCount: flat[$0 + 2])
+            }
+            self.delegate?.vimEngineFoldsDidChange(self)
+        }
+
+        install("folds", unsafeBitCast(folds, to: AnyObject.self))
         install("tokenType", unsafeBitCast(tokenType, to: AnyObject.self))
         install("edits", unsafeBitCast(edits, to: AnyObject.self))
         install("select", unsafeBitCast(select, to: AnyObject.self))

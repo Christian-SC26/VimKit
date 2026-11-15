@@ -22,3 +22,8 @@ extension VimTokenType {
         return (value as? String).flatMap(VimTokenType.init(rawValue:))
     }
 }
+
+extension VimFold {
+    /// Text shown after a closed fold's header line.
+    var placeholder: String { "⋯ \(lineCount) \(lineCount == 1 ? "line" : "lines")" }
+}

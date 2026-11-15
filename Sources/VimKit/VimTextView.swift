@@ -19,6 +19,7 @@ open class VimTextView: NSTextView {
         didSet {
             guard isVimEnabled != oldValue else { return }
             if isVimEnabled { vim.setText(string) }
+            applyFolds()
             updateCursorAppearance()
         }
     }
@@ -46,6 +47,8 @@ open class VimTextView: NSTextView {
     private var pendingEdits: [[(range: NSRange, text: String)]] = []
     private var pendingSelection = false
     private let blockCursor = NSView()
+    private var foldLabels: [FoldLabel] = []
+    private var foldLabelWidth: CGFloat = -1
     private let geometry = TextKit2Geometry()
 
     /// The shared TextKit 2 geometry, or nil when the view uses TextKit 1.
@@ -95,6 +98,8 @@ open class VimTextView: NSTextView {
         blockCursor.wantsLayer = true
         blockCursor.isHidden = true
         addSubview(blockCursor)
+        // Folded lines are left out of layout by the content storage delegate.
+        if let storage = textContentStorage, storage.delegate == nil { storage.delegate = self }
         if let textStorage {
             NotificationCenter.default.addObserver(
                 self, selector: #selector(vimTextStorageDidProcessEditing(_:)),
@@ -200,6 +205,7 @@ open class VimTextView: NSTextView {
 
     open override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
+        if !foldLabels.isEmpty, newSize.width != foldLabelWidth { updateFoldLabels() }
         updateBlockCursor()
     }
 
@@ -299,6 +305,44 @@ open class VimTextView: NSTextView {
         guard let textKit2 else { return characterIndexForInsertion(at: point) }
         let origin = textContainerOrigin
         return textKit2.characterIndex(at: CGPoint(x: point.x - origin.x, y: point.y - origin.y), text: string as NSString)
+    }
+
+    // MARK: Folding
+
+    private func applyFolds() {
+        textKit2?.setHidden(isVimEnabled ? vim.folds.map(\.hiddenRange) : [])
+        updateFoldLabels()
+        updateBlockCursor()
+    }
+
+    /// A "⋯ N lines" label after each closed fold's header line.
+    private func updateFoldLabels() {
+        let folds = isVimEnabled && textKit2 != nil ? vim.folds : []
+        foldLabelWidth = bounds.width
+        while foldLabels.count > folds.count { foldLabels.removeLast().removeFromSuperview() }
+        while foldLabels.count < folds.count {
+            let label = FoldLabel()
+            addSubview(label, positioned: .below, relativeTo: blockCursor)
+            foldLabels.append(label)
+        }
+        let labelFont = NSFont.monospacedSystemFont(ofSize: effectiveFont.pointSize * 0.85, weight: .regular)
+        for (fold, label) in zip(folds, foldLabels) {
+            guard let header = characterRect(at: fold.hiddenRange.location - 1) else {
+                label.isHidden = true
+                continue
+            }
+            label.font = labelFont
+            label.stringValue = fold.placeholder
+            label.sizeToFit()
+            let size = CGSize(width: label.frame.width + 8, height: min(label.frame.height, header.height))
+            label.frame = CGRect(x: header.maxX + spaceWidth, y: header.midY - size.height / 2, width: size.width, height: size.height).integral
+            label.isHidden = false
+        }
+    }
+
+    /// Placeholders of the closed folds, for tests.
+    var foldPlaceholders: [(text: String, frame: CGRect)] {
+        foldLabels.filter { !$0.isHidden }.map { ($0.stringValue, $0.frame) }
     }
 
     // MARK: Search highlight
@@ -420,9 +464,46 @@ extension VimTextView: VimEngineDelegate {
 
     public func vimEngineLineHeight(_ engine: VimEngine) -> CGFloat? { lineHeight }
 
+    public func vimEngineFoldsDidChange(_ engine: VimEngine) { applyFolds() }
+
     public func vimEngine(_ engine: VimEngine, tokenTypeAt offset: Int) -> VimTokenType? {
         if let tokenTypeProvider { return tokenTypeProvider(offset) }
         return VimTokenType.at(offset - 1, in: textStorage)
     }
+}
+
+// MARK: - Folding
+
+extension VimTextView: NSTextContentStorageDelegate {
+    public nonisolated func textContentManager(
+        _ textContentManager: NSTextContentManager,
+        shouldEnumerate textElement: NSTextElement,
+        options: NSTextContentManager.EnumerationOptions
+    ) -> Bool {
+        // Layout runs on the main thread.
+        nonisolated(unsafe) let element = textElement
+        return MainActor.assumeIsolated { !geometry.isHidden(element) }
+    }
+}
+
+/// The "⋯ N lines" label of a closed fold. Clicks go through to the text.
+private final class FoldLabel: NSTextField {
+    init() {
+        super.init(frame: .zero)
+        isEditable = false
+        isSelectable = false
+        isBordered = false
+        drawsBackground = true
+        backgroundColor = .quaternaryLabelColor
+        textColor = .secondaryLabelColor
+        alignment = .center
+        wantsLayer = true
+        layer?.cornerRadius = 3
+        layer?.masksToBounds = true
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 #endif
