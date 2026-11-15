@@ -284,6 +284,13 @@ keyboard (I/O › Keyboard › Connect Hardware Keyboard). Both demos can show a
 `VimUITextView` is the UIKit counterpart of `VimTextView`, and `VimEditor`
 uses it on iOS.
 
+> **On hold.** Development currently focuses on macOS. `VimUITextView` is
+> still a `UITextView` on TextKit 2, as in 0.2.1: it builds and passes its
+> tests, but on long files the scroller can jump and far jumps after
+> large edits are slow, because TextKit 2 estimates the height of text off
+> screen. Moving it onto `VimTextLayout`, as on macOS, is planned — see
+> [STATUS.md](STATUS.md#работа-на-будущее-ipad-и-iphone).
+
 * Hardware keys go through `pressesBegan`. Consumed keys repeat while held
   (`keyRepeatDelay` and `keyRepeatInterval`).
 * iPad keyboards often have no Escape key. `Ctrl-[` works, or map Caps Lock
