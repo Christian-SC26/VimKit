@@ -25,6 +25,8 @@ public struct VimEditor: View {
         public var isVimEnabled: Bool
         public var showsStatusLine: Bool
         public var textInset: CGSize
+        /// Underline misspelled words (macOS; on iOS the system spell checker).
+        public var checksSpelling: Bool
         public var onSave: (() -> Void)?
         public var onExCommand: ((VimExCommand) -> Void)?
 
@@ -40,6 +42,7 @@ public struct VimEditor: View {
             isVimEnabled: Bool = true,
             showsStatusLine: Bool = true,
             textInset: CGSize = CGSize(width: 6, height: 8),
+            checksSpelling: Bool = false,
             onSave: (() -> Void)? = nil,
             onExCommand: ((VimExCommand) -> Void)? = nil
         ) {
@@ -48,6 +51,7 @@ public struct VimEditor: View {
             self.isVimEnabled = isVimEnabled
             self.showsStatusLine = showsStatusLine
             self.textInset = textInset
+            self.checksSpelling = checksSpelling
             self.onSave = onSave
             self.onExCommand = onExCommand
         }
@@ -133,6 +137,7 @@ struct VimTextViewRepresentable: NSViewRepresentable {
         textView.font = configuration.font
         textView.string = text
         textView.isVimEnabled = configuration.isVimEnabled
+        textView.isContinuousSpellCheckingEnabled = configuration.checksSpelling
 
         let coordinator = context.coordinator
         textView.onTextChange = { [weak coordinator, weak textView] in
@@ -158,6 +163,9 @@ struct VimTextViewRepresentable: NSViewRepresentable {
         if textView.font != configuration.font { textView.font = configuration.font }
         if textView.textContainerInset != configuration.textInset { textView.textContainerInset = configuration.textInset }
         if textView.isVimEnabled != configuration.isVimEnabled { textView.isVimEnabled = configuration.isVimEnabled }
+        if textView.isContinuousSpellCheckingEnabled != configuration.checksSpelling {
+            textView.isContinuousSpellCheckingEnabled = configuration.checksSpelling
+        }
     }
 
     @MainActor
@@ -209,6 +217,8 @@ struct VimTextViewRepresentable: UIViewRepresentable {
     }
 
     private func apply(_ configuration: VimEditor.Configuration, to textView: VimUITextView) {
+        let spelling: UITextSpellCheckingType = configuration.checksSpelling ? .yes : .no
+        if textView.spellCheckingType != spelling { textView.spellCheckingType = spelling }
         if textView.font != configuration.font { textView.font = configuration.font }
         let inset = UIEdgeInsets(
             top: configuration.textInset.height, left: configuration.textInset.width,

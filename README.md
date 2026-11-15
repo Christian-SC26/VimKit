@@ -221,6 +221,25 @@ window. It covers `G`, search, `<C-d>`/`<C-u>`/`<C-f>`/`<C-b>`, `zt`/`zz`/`zb`,
 `H`/`M`/`L`, `gj`/`gk`/`g0`/`g$` on wrapped lines, visual mode, `:%s` with
 undo and redo, the block cursor, and insert-mode `.` repeat.
 
+### Find bar and spelling (macOS)
+
+`VimTextView` implements `NSTextFinderClient`, so the system find bar
+works: ⌘F, ⌥⌘F (replace), ⌘G / ⇧⌘G and ⌘E, from the Edit › Find menu or
+from the keys even if the app's menu has no Find items. The bar shows in
+the enclosing scroll view; the text moves down under it, and Vim's screen
+motions (`H`, `L`, `zt`, `<C-f>`) measure the text below it. Replace All is
+sent to the engine (it is undone with `u`) and reported to the app once.
+Vim's own `/`, `n`, `:s` work as before.
+
+Set `isContinuousSpellCheckingEnabled` (or `checksSpelling` in
+`VimEditor.Configuration`) to underline misspelled words. Visible lines are
+checked in the background with `NSSpellChecker`, in the language it
+detects; the context menu offers guesses, Ignore and Learn, and Edit ›
+Spelling and Grammar works (⌘;, the Spelling panel). With
+`spellCheckingScope = .stringsAndComments` only text marked by
+`.vimTokenType` (or `tokenTypeProvider`) is checked, so identifiers are
+not flagged.
+
 ### Syntax awareness
 
 `%` skips brackets inside strings and comments, and so do the quote text

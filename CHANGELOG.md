@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- macOS `VimTextView`: the system find bar (`NSTextFinder`: ⌘F, ⌥⌘F, ⌘G,
+  ⇧⌘G, ⌘E, Replace All through the engine) and spell checking
+  (`isContinuousSpellCheckingEnabled`, `spellCheckingScope`, guesses in the
+  context menu, Edit › Spelling and Grammar). `VimEditor.Configuration`
+  gets `checksSpelling`. The find bar no longer covers the first lines,
+  and screen motions measure the text below it.
 - **Breaking:** `VimTextView` (macOS) is now an `NSView` that lays out and
   draws its text itself instead of an `NSTextView` on TextKit 2. Positions
   and the document height are exact, so the scroller no longer jumps or

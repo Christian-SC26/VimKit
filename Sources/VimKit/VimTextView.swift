@@ -102,8 +102,35 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
     private var syncSuppression = 0
     private var folds: [VimFold] = []
     private var markedTextRange: NSRange?
+
+    // Find bar and spelling (VimTextView+TextFinder.swift, VimTextView+Spelling.swift).
+    var textFinderStorage: NSTextFinder?
+    var textFinderClient: VimTextFinderClient?
+    /// Whether the find bar is replacing text (Replace All edits come one by one).
+    var textFinderEditing = false
+    /// Misspelled ranges of each checked line's text, relative to the line.
+    var spellResults: [String: [NSRange]] = [:]
+    var spellPending: Set<String> = []
+    lazy var spellDocumentTag = NSSpellChecker.uniqueSpellDocumentTag()
+
+    /// Underline misspelled words as you type (Edit › Spelling and Grammar).
+    public var isContinuousSpellCheckingEnabled = false {
+        didSet {
+            guard isContinuousSpellCheckingEnabled != oldValue else { return }
+            spellResults = [:]
+            needsDisplay = true
+        }
+    }
+
+    /// Which text continuous spell checking looks at.
+    public var spellCheckingScope: VimSpellCheckingScope = .all {
+        didSet { needsDisplay = true }
+    }
     private var storageObserver: (any NSObjectProtocol)?
     private var clipObserver: (any NSObjectProtocol)?
+    private var findBarObservation: NSKeyValueObservation?
+    /// Top of the visible text just before the find bar appears or hides.
+    private var textTopBeforeInsetChange: CGFloat?
 
     // MARK: Initialization
 
@@ -154,6 +181,7 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
         get { textStorage.string }
         set {
             markedTextRange = nil
+            noteTextWillChange()
             syncSuppression += 1
             textStorage.replaceCharacters(in: NSRange(location: 0, length: textStorage.length),
                                           with: NSAttributedString(string: newValue))
@@ -191,11 +219,12 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
 
     /// A user edit (typing, input method, paste, editing commands): applied
     /// to the text and sent to the engine.
-    private func replace(_ range: NSRange, with text: String, selection: NSRange? = nil) {
+    func replace(_ range: NSRange, with text: String, selection: NSRange? = nil, notify: Bool = true) {
         guard isEditable else {
             NSSound.beep()
             return
         }
+        noteTextWillChange()
         let range = clamp(range, to: textStorage.length)
         let length = (text as NSString).length
         if !isVimEnabled, let undoManager {
@@ -210,10 +239,10 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
         syncSuppression -= 1
         if isVimEnabled { vim.replaceCharacters(in: range, with: text) }
         setSelectedRanges([selection ?? NSRange(location: range.location + length, length: 0)])
-        textDidChange()
+        if notify { textDidChange() }
     }
 
-    private func textDidChange() {
+    func textDidChange() {
         onTextChange?()
         NotificationCenter.default.post(name: NSText.didChangeNotification, object: self)
         NSAccessibility.post(element: self, notification: .valueChanged)
@@ -258,7 +287,7 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
     // MARK: Geometry
 
     /// Top left of the text in view coordinates.
-    private var textOrigin: CGPoint {
+    var textOrigin: CGPoint {
         CGPoint(x: textContainerInset.width + padding, y: textContainerInset.height)
     }
 
@@ -266,7 +295,7 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
         wrapsLines ? max(width - 2 * (textContainerInset.width + padding), layout.spaceWidth) : .infinity
     }
 
-    private var lineHeight: CGFloat { layout.rowHeight }
+    var lineHeight: CGFloat { layout.rowHeight }
 
     /// Rectangle of the character at `offset` in view coordinates, or nil
     /// when it is folded away. At a line end (or the end of the text) it is a
@@ -279,7 +308,7 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
 
     /// Like ``characterRect(at:)``, but a folded character reports the end
     /// of the fold's header line.
-    private func layoutRect(at offset: Int) -> CGRect {
+    func layoutRect(at offset: Int) -> CGRect {
         let origin = textOrigin
         return layout.characterRect(at: offset).offsetBy(dx: origin.x, dy: origin.y)
     }
@@ -315,7 +344,8 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
         let width = wrapsLines ? size.width
             : max(size.width, ceil(layout.widestLineWidth() + 2 * origin.x + layout.spaceWidth))
         layout.setWrapWidth(wrapWidth(for: width))
-        let height = max(size.height, ceil(layout.height + 2 * textContainerInset.height))
+        let insets = clip.contentInsets
+        let height = max(size.height - insets.top - insets.bottom, ceil(layout.height + 2 * textContainerInset.height))
         let frameSize = NSSize(width: width, height: height)
         if frame.size != frameSize { super.setFrameSize(frameSize) }
     }
@@ -341,7 +371,63 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.updateFrameSize() }
         }
+        findBarObservation = (clip.superview as? NSScrollView)?.observe(\.isFindBarVisible, options: [.prior]) { [weak self] _, change in
+            MainActor.assumeIsolated { self?.findBarVisibilityChanged(before: change.isPrior) }
+        }
         updateFrameSize()
+    }
+
+    /// The find bar covers the top of the clip view and insets it: keep the
+    /// same line at the top of the visible text when it appears or hides.
+    private func findBarVisibilityChanged(before: Bool) {
+        guard let clip = superview as? NSClipView, let scrollView = clip.superview as? NSScrollView else { return }
+        if before {
+            textTopBeforeInsetChange = clip.bounds.minY + clip.contentInsets.top
+            return
+        }
+        scrollView.tile()
+        updateFrameSize()
+        guard let top = textTopBeforeInsetChange else { return }
+        textTopBeforeInsetChange = nil
+        let origin = CGPoint(x: clip.bounds.minX, y: top - clip.contentInsets.top)
+        clip.scroll(to: clip.constrainBoundsRect(NSRect(origin: origin, size: clip.bounds.size)).origin)
+        scrollView.reflectScrolledClipView(clip)
+    }
+
+    /// Scrolls the least needed to show `rect` below the find bar (AppKit's
+    /// `scrollToVisible` ignores the clip view's insets).
+    func scrollTextToVisible(_ rect: CGRect) {
+        guard let clip = superview as? NSClipView, let scrollView = clip.superview as? NSScrollView else {
+            scrollToVisible(rect)
+            return
+        }
+        let visible = textVisibleRect
+        var origin = clip.bounds.origin
+        if rect.minY < visible.minY {
+            origin.y -= visible.minY - rect.minY
+        } else if rect.maxY > visible.maxY {
+            origin.y += min(rect.maxY - visible.maxY, rect.minY - visible.minY)
+        }
+        if rect.minX < visible.minX {
+            origin.x -= visible.minX - rect.minX
+        } else if rect.maxX > visible.maxX {
+            origin.x += min(rect.maxX - visible.maxX, rect.minX - visible.minX)
+        }
+        guard origin != clip.bounds.origin else { return }
+        clip.scroll(to: clip.constrainBoundsRect(NSRect(origin: origin, size: clip.bounds.size)).origin)
+        scrollView.reflectScrolledClipView(clip)
+    }
+
+    /// The part of the view on screen that is not under the find bar.
+    var textVisibleRect: CGRect {
+        var rect = visibleRect
+        guard let clip = superview as? NSClipView else { return rect }
+        let insets = clip.contentInsets
+        let top = max(rect.minY, clip.bounds.minY + insets.top)
+        let bottom = min(rect.maxY, clip.bounds.maxY - insets.bottom)
+        rect.origin.y = top
+        rect.size.height = max(0, bottom - top)
+        return rect
     }
 
     open override func viewWillMove(toWindow newWindow: NSWindow?) {
@@ -359,7 +445,7 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
 
     // MARK: Cursor
 
-    private var showsBlockCursor: Bool { isVimEnabled && !vim.mode.isInsertLike }
+    var showsBlockCursor: Bool { isVimEnabled && !vim.mode.isInsertLike }
 
     /// Where the block cursor is drawn (view coordinates), or nil when hidden.
     private(set) var blockCursorFrame: CGRect?
@@ -489,6 +575,7 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
                 }
             }
             if let marked = markedTextRange { underline(marked, lines: lines) }
+            if isContinuousSpellCheckingEnabled { drawMisspellings(lines: lines) }
             drawFoldPlaceholders(between: visible.location, and: visible.upperBound, in: dirtyRect)
         }
         drawCursor(in: dirtyRect, context: context)
@@ -528,7 +615,7 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
     /// Calls `body` with each screen row of `lines` that `range` touches:
     /// the row's start and end offsets, its CTLine and top, and whether the
     /// range continues past the row's end (a line break or a wrap).
-    private func forEachRow(of range: NSRange, lines: [(line: Int, y: CGFloat)],
+    func forEachRow(of range: NSRange, lines: [(line: Int, y: CGFloat)],
                             _ body: (_ start: Int, _ rowStart: Int, _ rowEnd: Int, _ ctLine: CTLine, _ top: CGFloat, _ continues: Bool) -> Void) {
         let origin = textOrigin
         for (line, y) in lines {
@@ -654,7 +741,7 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
 
     /// Placeholders of the closed folds within a screen of the visible text, for tests.
     var foldPlaceholders: [(text: String, frame: CGRect)] {
-        let visible = visibleRect.isEmpty ? bounds : visibleRect
+        let visible = textVisibleRect.isEmpty ? bounds : textVisibleRect
         let area = visible.insetBy(dx: 0, dy: -visible.height)
         let start = characterIndex(at: CGPoint(x: 0, y: area.minY)), end = characterIndex(at: CGPoint(x: area.maxX, y: area.maxY))
         return folds.withHeaders(between: start, and: max(start, layout.lineEnd(layout.line(containing: end)))).compactMap { fold in
@@ -676,6 +763,13 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
         needsDisplay = true
         stopBlinking()
         return true
+    }
+
+    /// ⌘F, ⌥⌘F, ⌘G, ⇧⌘G and ⌘E open and drive the find bar even when the
+    /// app's menu has no Find items.
+    open override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if handleFindKeyEquivalent(event) { return true }
+        return super.performKeyEquivalent(with: event)
     }
 
     open override func keyDown(with event: NSEvent) {
@@ -735,15 +829,28 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
         case #selector(cut(_:)): return isEditable && selectedRange().length > 0
         case #selector(paste(_:)): return isEditable && NSPasteboard.general.string(forType: .string) != nil
         case #selector(selectAll(_:)): return true
+        case #selector(performTextFinderAction(_:)), #selector(performFindPanelAction(_:)):
+            return textFinder.validateAction(NSTextFinder.Action(rawValue: item.tag) ?? .showFindInterface)
+        case #selector(toggleContinuousSpellChecking(_:)):
+            (item as? NSMenuItem)?.state = isContinuousSpellCheckingEnabled ? .on : .off
+            return true
+        case #selector(checkSpelling(_:)), #selector(showGuessPanel(_:)): return true
         default: return responds(to: item.action)
         }
     }
 
     open override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu()
+        addSpellingSuggestions(to: menu, at: convert(event.locationInWindow, from: nil))
         menu.addItem(withTitle: "Cut", action: #selector(cut(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Copy", action: #selector(copy(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Paste", action: #selector(paste(_:)), keyEquivalent: "")
+        menu.addItem(.separator())
+        let spelling = NSMenuItem(title: "Spelling", action: nil, keyEquivalent: "")
+        spelling.submenu = NSMenu(title: "Spelling")
+        spelling.submenu?.addItem(withTitle: "Check Document Now", action: #selector(checkSpelling(_:)), keyEquivalent: "")
+        spelling.submenu?.addItem(withTitle: "Check Spelling While Typing", action: #selector(toggleContinuousSpellChecking(_:)), keyEquivalent: "")
+        menu.addItem(spelling)
         return menu
     }
 
@@ -795,7 +902,7 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
             selectionAnchor = nil
             setSelectedRange(NSRange(location: offset, length: 0))
         }
-        if let rect = characterRect(at: offset) { scrollToVisible(rect) }
+        if let rect = characterRect(at: offset) { scrollTextToVisible(rect) }
     }
 
     /// The moving end of the selection.
@@ -860,7 +967,7 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
     open override func scrollToBeginningOfDocument(_ sender: Any?) { scroll(.zero) }
     open override func scrollToEndOfDocument(_ sender: Any?) { scroll(CGPoint(x: 0, y: bounds.height)) }
 
-    private var pageHeight: CGFloat { max(visibleRect.height - lineHeight, lineHeight) }
+    private var pageHeight: CGFloat { max(textVisibleRect.height - lineHeight, lineHeight) }
 
     private func scrollBy(_ dy: CGFloat) {
         scroll(CGPoint(x: visibleRect.minX, y: visibleRect.minY + dy))
@@ -994,7 +1101,7 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
     }
 
     open override func accessibilityVisibleCharacterRange() -> NSRange {
-        let visible = visibleRect
+        let visible = textVisibleRect
         let start = characterIndex(at: CGPoint(x: 0, y: visible.minY))
         let end = layout.lineEnd(layout.line(containing: characterIndex(at: CGPoint(x: visible.maxX, y: visible.maxY))))
         return NSRange(location: start, length: max(0, end - start))
@@ -1027,6 +1134,7 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
 
 extension VimTextView: VimEngineDelegate {
     public func vimEngineWillApplyEdits(_ engine: VimEngine) {
+        noteTextWillChange()
         syncSuppression += 1
         textStorage.beginEditing()
     }
@@ -1079,7 +1187,7 @@ extension VimTextView: VimEngineDelegate {
 
     public func vimEngineScrollInfo(_ engine: VimEngine) -> VimScrollInfo? {
         guard enclosingScrollView != nil else { return nil }
-        return VimScrollInfo(visibleRect: visibleRect, contentSize: bounds.size)
+        return VimScrollInfo(visibleRect: textVisibleRect, contentSize: bounds.size)
     }
 
     public func vimEngine(_ engine: VimEngine, scrollToX x: CGFloat?, y: CGFloat?) {
@@ -1087,20 +1195,21 @@ extension VimTextView: VimEngineDelegate {
         let clip = scrollView.contentView
         var origin = clip.bounds.origin
         if let x { origin.x = x }
-        if let y { origin.y = y }
+        // `y` is the top of the visible text, below the find bar if it is shown.
+        if let y { origin.y = y - clip.contentInsets.top }
         let constrained = clip.constrainBoundsRect(NSRect(origin: origin, size: clip.bounds.size))
         clip.scroll(to: constrained.origin)
         scrollView.reflectScrolledClipView(clip)
     }
 
     public func vimEngine(_ engine: VimEngine, scrollCharacterToVisible offset: Int, margin: CGFloat) {
-        scrollToVisible(layoutRect(at: offset).insetBy(dx: 0, dy: -margin))
+        scrollTextToVisible(layoutRect(at: offset).insetBy(dx: 0, dy: -margin))
     }
 
     public func vimEngine(_ engine: VimEngine, verticalMoveFrom offset: Int, forward: Bool, byPage: Bool, goalX: CGFloat?) -> Int? {
         let rect = layoutRect(at: offset)
         // A page is the visible height less half a line, as in CodeMirror.
-        let step = byPage ? max(visibleRect.height - lineHeight / 2, lineHeight) : rect.height
+        let step = byPage ? max(textVisibleRect.height - lineHeight / 2, lineHeight) : rect.height
         let y = forward ? rect.midY + step : rect.midY - step
         if y < textOrigin.y { return 0 }
         let index = characterIndex(at: NSPoint(x: (goalX ?? rect.minX) + 1, y: y))
