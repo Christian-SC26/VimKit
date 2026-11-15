@@ -1,6 +1,12 @@
+#if os(macOS) || (canImport(UIKit) && !os(watchOS))
+import SwiftUI
 #if os(macOS)
 import AppKit
-import SwiftUI
+public typealias VimPlatformFont = NSFont
+#else
+import UIKit
+public typealias VimPlatformFont = UIFont
+#endif
 
 /// A SwiftUI text editor with Vim keybindings and an optional status line.
 ///
@@ -14,7 +20,7 @@ public struct VimEditor: View {
     @State private var status = VimStatus()
 
     public struct Configuration {
-        public var font: NSFont
+        public var font: VimPlatformFont
         public var options: VimOptions
         public var isVimEnabled: Bool
         public var showsStatusLine: Bool
@@ -22,8 +28,14 @@ public struct VimEditor: View {
         public var onSave: (() -> Void)?
         public var onExCommand: ((VimExCommand) -> Void)?
 
+        #if os(macOS)
+        public static let defaultFontSize: CGFloat = 13
+        #else
+        public static let defaultFontSize: CGFloat = 15
+        #endif
+
         public init(
-            font: NSFont = .monospacedSystemFont(ofSize: 13, weight: .regular),
+            font: VimPlatformFont = .monospacedSystemFont(ofSize: Self.defaultFontSize, weight: .regular),
             options: VimOptions = VimOptions(),
             isVimEnabled: Bool = true,
             showsStatusLine: Bool = true,
@@ -107,6 +119,7 @@ public struct VimStatusLine: View {
     }
 }
 
+#if os(macOS)
 struct VimTextViewRepresentable: NSViewRepresentable {
     @Binding var text: String
     @Binding var status: VimStatus
@@ -174,4 +187,62 @@ struct VimTextViewRepresentable: NSViewRepresentable {
         }
     }
 }
+#else
+struct VimTextViewRepresentable: UIViewRepresentable {
+    @Binding var text: String
+    @Binding var status: VimStatus
+    var configuration: VimEditor.Configuration
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIView(context: Context) -> VimUITextView {
+        let textView = VimUITextView(options: configuration.options)
+        apply(configuration, to: textView)
+        textView.text = text
+        textView.delegate = context.coordinator
+        let coordinator = context.coordinator
+        textView.onStatusChange = { [weak coordinator] status in coordinator?.statusChanged(status) }
+        textView.onSave = { [weak coordinator] in coordinator?.parent.configuration.onSave?() }
+        textView.onExCommand = { [weak coordinator] command in coordinator?.parent.configuration.onExCommand?(command) }
+        return textView
+    }
+
+    func updateUIView(_ textView: VimUITextView, context: Context) {
+        context.coordinator.parent = self
+        if textView.text != text { textView.text = text }
+        apply(configuration, to: textView)
+    }
+
+    private func apply(_ configuration: VimEditor.Configuration, to textView: VimUITextView) {
+        if textView.font != configuration.font { textView.font = configuration.font }
+        let inset = UIEdgeInsets(
+            top: configuration.textInset.height, left: configuration.textInset.width,
+            bottom: configuration.textInset.height, right: configuration.textInset.width
+        )
+        if textView.textContainerInset != inset { textView.textContainerInset = inset }
+        if textView.isVimEnabled != configuration.isVimEnabled { textView.isVimEnabled = configuration.isVimEnabled }
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var parent: VimTextViewRepresentable
+
+        init(_ parent: VimTextViewRepresentable) {
+            self.parent = parent
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            let text = textView.text ?? ""
+            if parent.text != text { parent.text = text }
+        }
+
+        func statusChanged(_ status: VimStatus) {
+            Task { @MainActor [weak self] in
+                guard let self, self.parent.status != status else { return }
+                self.parent.status = status
+            }
+        }
+    }
+}
+#endif
 #endif

@@ -79,8 +79,11 @@ struct MotionTests {
         #expect(vim.cursor == VimPosition(line: 2, column: 0))
         vim.feed("N")
         #expect(vim.cursor == VimPosition(line: 1, column: 4))
-        // vim.js applies the highlight on a 50 ms timer.
-        try await Task.sleep(for: .milliseconds(200))
+        // vim.js applies the highlight on a 50 ms timer; the main actor may be busy with other tests.
+        let deadline = ContinuousClock.now + .seconds(10)
+        while vim.searchMatches().count != 3, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
         #expect(vim.searchMatches().count == 3)
         vim.feed("<Esc>")
         #expect(vim.searchMatches().isEmpty)

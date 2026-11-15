@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 @testable import VimCore
 @testable import VimKit
@@ -113,3 +114,4 @@ func sampleCode(lines: Int) -> String {
         i % 10 == 9 ? "" : "    let value\(i) = compute(\(i), \"label \(i)\") // note \(i % 97)"
     }.joined(separator: "\n")
 }
+#endif

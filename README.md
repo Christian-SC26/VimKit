@@ -178,9 +178,32 @@ depth.
 
 ## Demo
 
+macOS:
+
 ```sh
 swift run VimKitDemo
 ```
+
+iPad / iPhone: open `Demo/VimKitDemo.swiftpm` in Xcode and run it on a
+simulator or a device. In the simulator, use the Mac keyboard as a hardware
+keyboard (I/O › Keyboard › Connect Hardware Keyboard). Both demos can show a
+20,000-line sample or open any text file.
+
+### iPad
+
+`VimUITextView` is the UIKit counterpart of `VimTextView`, and `VimEditor`
+uses it on iOS.
+
+* Hardware keys go through `pressesBegan`. Consumed keys repeat while held
+  (`keyRepeatDelay` and `keyRepeatInterval`).
+* iPad keyboards often have no Escape key. `Ctrl-[` works, or map Caps Lock
+  to Escape in Settings › General › Keyboard › Hardware Keyboard ›
+  Modifier Keys.
+* With the on-screen keyboard, characters typed in normal or visual mode
+  run as commands. Text from dictation, paste and IME reaches vim through
+  the text storage.
+* `⌘Z` / `⇧⌘Z` use vim's undo history. UIKit's undo manager is disabled
+  while Vim is on.
 
 ## Status and roadmap
 
@@ -192,7 +215,7 @@ non-Latin layouts. 712 of the 716 tests in codemirror-vim's own suite pass.
 
 Planned:
 
-- [ ] `VimUITextView` for iPadOS with a hardware keyboard
+- [x] `VimUITextView` for iPadOS with a hardware keyboard
 - [x] Run codemirror-vim's own test suite against the adapter
 - [x] Syntax-aware `%` and text objects via a delegate hook
 - [ ] `tokenTypeAt` from NSTextView syntax-highlighting attributes

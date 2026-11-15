@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import Testing
 @testable import VimKit
@@ -113,3 +114,4 @@ struct KeyboardLayoutTests {
         #expect(view.vim.cursor.line == 1)
     }
 }
+#endif

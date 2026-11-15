@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import Foundation
 import Testing
@@ -79,3 +80,4 @@ struct PerformanceTests {
         }
     }
 }
+#endif

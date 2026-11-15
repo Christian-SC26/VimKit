@@ -88,3 +88,67 @@ extension VimKeyEvent {
         98: "F7", 100: "F8", 101: "F9", 109: "F10", 103: "F11", 111: "F12",
     ]
 }
+
+// MARK: - HID usages (UIKit `UIKey.keyCode`)
+
+extension VimKeyEvent {
+    /// Builds an event from a USB HID keyboard usage, the key code UIKit
+    /// reports in `UIKey.keyCode`, and the characters the key produced.
+    /// Returns nil for keys vim cannot use (modifier-only presses, unknown
+    /// function keys).
+    public init?(
+        hidUsage: Int,
+        characters: String,
+        charactersIgnoringModifiers: String,
+        control: Bool = false,
+        option: Bool = false,
+        command: Bool = false,
+        shift: Bool = false
+    ) {
+        let code = Self.physicalCode(forHIDUsage: hidUsage, shift: shift)
+        if let special = Self.specialHIDUsages[hidUsage] {
+            self.init(key: special, code: code, control: control, option: option, command: command, shift: shift)
+            return
+        }
+        // Same rules as for AppKit: with Control or Command vim wants the plain key.
+        let produced = control || command ? charactersIgnoringModifiers : characters
+        guard let scalar = produced.unicodeScalars.first, scalar.value >= 0x20, scalar.value != 0x7F else { return nil }
+        if (0xF700...0xF8FF).contains(scalar.value) || produced.hasPrefix("UIKeyInput") { return nil }
+        self.init(key: produced, code: code, control: control, option: option, command: command, shift: shift)
+    }
+
+    /// US-ANSI characters for HID keyboard usages: (unshifted, shifted).
+    static let usLayoutHID: [Int: (Character, Character)] = {
+        var map: [Int: (Character, Character)] = [:]
+        for (index, letter) in "abcdefghijklmnopqrstuvwxyz".enumerated() {
+            map[4 + index] = (letter, Character(letter.uppercased()))
+        }
+        for (index, pair) in zip("1234567890", "!@#$%^&*()").enumerated() {
+            map[30 + index] = pair
+        }
+        let punctuation: [Int: (Character, Character)] = [
+            45: ("-", "_"), 46: ("=", "+"), 47: ("[", "{"), 48: ("]", "}"), 49: ("\\", "|"),
+            51: (";", ":"), 52: ("'", "\""), 53: ("`", "~"), 54: (",", "<"), 55: (".", ">"), 56: ("/", "?"),
+        ]
+        map.merge(punctuation) { $1 }
+        return map
+    }()
+
+    /// The `code` for a HID keyboard usage (see ``physicalCode(forKeyCode:shift:)``).
+    public static func physicalCode(forHIDUsage usage: Int, shift: Bool) -> String {
+        guard let (plain, shifted) = usLayoutHID[usage] else { return "" }
+        if plain.isLetter { return "Key" + plain.uppercased() }
+        return "Key" + String(shift ? shifted : plain)
+    }
+
+    /// Key names for HID keyboard usages that do not produce text.
+    public static let specialHIDUsages: [Int: String] = {
+        var map: [Int: String] = [
+            41: escape, 40: enter, 88: enter, 42: backspace, 76: delete, 43: tab,
+            80: arrowLeft, 79: arrowRight, 81: arrowDown, 82: arrowUp,
+            74: home, 77: end, 75: pageUp, 78: pageDown,
+        ]
+        for index in 0..<12 { map[58 + index] = "F\(index + 1)" }
+        return map
+    }()
+}

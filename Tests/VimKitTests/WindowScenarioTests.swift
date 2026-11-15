@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import Testing
 @testable import VimCore
@@ -170,3 +171,4 @@ struct WindowScenarioTests {
         #expect(inSync(editor))
     }
 }
+#endif

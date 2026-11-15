@@ -42,9 +42,14 @@ open class VimTextView: NSTextView {
     private var pendingEdits: [[(range: NSRange, text: String)]] = []
     private var pendingSelection = false
     private let blockCursor = NSView()
-    /// Text before this offset has exact (not estimated) TextKit 2 layout.
-    private var exactLayoutEnd = 0
-    private var exactLayoutWidth: CGFloat = -1
+    private let geometry = TextKit2Geometry()
+
+    /// The shared TextKit 2 geometry, or nil when the view uses TextKit 1.
+    private var textKit2: TextKit2Geometry? {
+        guard let textLayoutManager else { return nil }
+        if geometry.layoutManager !== textLayoutManager { geometry.layoutManager = textLayoutManager }
+        return geometry
+    }
 
     // MARK: Initialization
 
@@ -232,120 +237,46 @@ open class VimTextView: NSTextView {
         (" " as NSString).size(withAttributes: [.font: effectiveFont]).width
     }
 
-    private func textRange(for range: NSRange) -> NSTextRange? {
-        guard let manager = textLayoutManager?.textContentManager,
-              let start = manager.location(manager.documentRange.location, offsetBy: range.location),
-              let end = manager.location(start, offsetBy: range.length)
-        else { return nil }
-        return NSTextRange(location: start, end: end)
-    }
-
     /// Rectangle of the character at `offset` in view coordinates. At a line
     /// end (or the end of the text) it is a space-wide box.
     public func characterRect(at offset: Int) -> CGRect? {
         let text = string as NSString
+        let origin = textContainerOrigin
+        if let textKit2 {
+            return textKit2.characterRect(at: offset, text: text, spaceWidth: spaceWidth, lineHeight: lineHeight)?
+                .offsetBy(dx: origin.x, dy: origin.y)
+        }
+        guard let layoutManager, let textContainer else { return nil }
         let offset = max(0, min(offset, text.length))
         let isCharacter = offset < text.length && text.character(at: offset) != 0x0A
         let length = isCharacter ? text.rangeOfComposedCharacterSequence(at: offset).length : 0
-        var rect: CGRect?
-
-        if let layoutManager = textLayoutManager {
-            guard let range = textRange(for: NSRange(location: offset, length: length)) else { return nil }
-            ensureContiguousLayout(through: range)
-            layoutManager.enumerateTextSegments(in: range, type: .standard, options: []) { _, frame, _, _ in
-                rect = rect.map { $0.union(frame) } ?? frame
-                return true
-            }
-        } else if let layoutManager, let textContainer {
-            let glyphs = layoutManager.glyphRange(forCharacterRange: NSRange(location: offset, length: max(length, 1)), actualCharacterRange: nil)
-            rect = layoutManager.boundingRect(forGlyphRange: glyphs, in: textContainer)
-        }
-
-        guard var rect else {
-            if text.length == 0 {
-                let origin = textContainerOrigin
-                let padding = textContainer?.lineFragmentPadding ?? 0
-                return CGRect(x: origin.x + padding, y: origin.y, width: spaceWidth, height: lineHeight)
-            }
-            return nil
-        }
-        rect.origin.x += textContainerOrigin.x
-        rect.origin.y += textContainerOrigin.y
+        let glyphs = layoutManager.glyphRange(forCharacterRange: NSRange(location: offset, length: max(length, 1)), actualCharacterRange: nil)
+        var rect = layoutManager.boundingRect(forGlyphRange: glyphs, in: textContainer).offsetBy(dx: origin.x, dy: origin.y)
         if !isCharacter || rect.width < 1 { rect.size.width = spaceWidth }
         if rect.height < 1 { rect.size.height = lineHeight }
         return rect
     }
 
-    /// TextKit 2 places text it has not laid out yet at estimated positions,
-    /// which move once the text before it is laid out (so `zb`, `H` or `<C-d>`
-    /// would land on the wrong line). Laying out everything from the start of
-    /// the document up to `range` makes the positions exact.
-    /// Only text past `exactLayoutEnd` is laid out; edits and width changes move it back.
-    private func ensureContiguousLayout(through range: NSTextRange) {
-        guard let layoutManager = textLayoutManager, let content = layoutManager.textContentManager else { return }
-        let width = textContainer?.size.width ?? 0
-        if width != exactLayoutWidth {
-            exactLayoutWidth = width
-            exactLayoutEnd = 0
-        }
-        let documentStart = content.documentRange.location
-        let target = content.offset(from: documentStart, to: range.endLocation)
-        if target > exactLayoutEnd,
-           let start = content.location(documentStart, offsetBy: exactLayoutEnd),
-           let missing = NSTextRange(location: start, end: range.endLocation) {
-            layoutManager.ensureLayout(for: missing)
-            exactLayoutEnd = target
-        } else {
-            layoutManager.ensureLayout(for: range)
-        }
-    }
-
     @objc private func vimTextStorageDidProcessEditing(_ notification: Notification) {
         guard let storage = notification.object as? NSTextStorage else { return }
-        exactLayoutEnd = min(exactLayoutEnd, storage.editedRange.location)
+        geometry.noteEdit(at: storage.editedRange.location)
     }
 
     /// Offset of the character at `point` (view coordinates), laying out that
     /// part of the text first. Unlike `characterIndexForInsertion(at:)`, this
     /// also works outside the laid-out viewport (TextKit 2).
     public func characterIndex(at point: CGPoint) -> Int {
-        let text = string as NSString
-        guard let layoutManager = textLayoutManager, let content = layoutManager.textContentManager else {
-            return characterIndexForInsertion(at: point)
-        }
-        let local = CGPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y)
-        if local.y < 0 { return 0 }
-        layoutManager.ensureLayout(for: CGRect(x: 0, y: local.y, width: 1, height: 1))
-        guard let fragment = layoutManager.textLayoutFragment(for: local) else {
-            return text.length
-        }
-        let frame = fragment.layoutFragmentFrame
-        let start = content.offset(from: content.documentRange.location, to: fragment.rangeInElement.location)
-        let lines = fragment.textLineFragments
-        let y = local.y - frame.minY
-        guard let line = lines.first(where: { y < $0.typographicBounds.maxY }) ?? lines.last else { return start }
-        let bounds = line.typographicBounds
-        let lineStart = start + line.characterRange.location
-        var lineEnd = min(start + line.characterRange.location + line.characterRange.length, text.length)
-        if lineEnd > lineStart, text.character(at: lineEnd - 1) == 0x0A { lineEnd -= 1 }
-        let x = local.x - frame.minX - bounds.minX
-        if x <= 0 { return lineStart }
-        let index = line.characterIndex(for: CGPoint(x: x, y: bounds.height / 2))
-        if index == NSNotFound { return lineEnd } // past the end of the line
-        return min(max(start + index, lineStart), lineEnd)
+        guard let textKit2 else { return characterIndexForInsertion(at: point) }
+        let origin = textContainerOrigin
+        return textKit2.characterIndex(at: CGPoint(x: point.x - origin.x, y: point.y - origin.y), text: string as NSString)
     }
 
     // MARK: Search highlight
 
     private func updateSearchHighlight() {
         let matches = isVimEnabled ? vim.searchMatches(limit: 5_000) : []
-        if let layoutManager = textLayoutManager {
-            layoutManager.removeRenderingAttribute(.backgroundColor, for: layoutManager.documentRange)
-            for match in matches {
-                if let range = textRange(for: match) {
-                    layoutManager.addRenderingAttribute(.backgroundColor, value: searchHighlightColor, for: range)
-                }
-            }
+        if let textKit2 {
+            textKit2.setHighlights(matches, color: searchHighlightColor)
         } else if let layoutManager {
             let all = NSRange(location: 0, length: (string as NSString).length)
             layoutManager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: all)
@@ -452,24 +383,7 @@ extension VimTextView: VimEngineDelegate {
     }
 
     public func vimEngine(_ engine: VimEngine, screenLineBoundaryFrom offset: Int, forward: Bool) -> Int? {
-        guard let layoutManager = textLayoutManager,
-              let content = layoutManager.textContentManager,
-              let location = content.location(content.documentRange.location, offsetBy: offset),
-              let fragment = layoutManager.textLayoutFragment(for: location)
-        else { return nil }
-        let text = string as NSString
-        let fragmentStart = content.offset(from: content.documentRange.location, to: fragment.rangeInElement.location)
-        let lines = fragment.textLineFragments
-        for (index, line) in lines.enumerated() {
-            let start = fragmentStart + line.characterRange.location
-            let end = start + line.characterRange.length
-            guard offset >= start, offset < end || index == lines.count - 1 else { continue }
-            if !forward { return start }
-            var result = min(end, text.length)
-            if result > start, text.character(at: result - 1) == 0x0A { result -= 1 }
-            return result
-        }
-        return nil
+        textKit2?.screenLineBoundary(from: offset, forward: forward, text: string as NSString)
     }
 
     public func vimEngineLineHeight(_ engine: VimEngine) -> CGFloat? { lineHeight }

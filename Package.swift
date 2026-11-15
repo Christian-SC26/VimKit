@@ -7,7 +7,7 @@ let package = Package(
     products: [
         // Editor-agnostic Vim engine (JavaScriptCore). Works on macOS and iOS.
         .library(name: "VimCore", targets: ["VimCore"]),
-        // AppKit text view and SwiftUI editor built on VimCore (macOS).
+        // AppKit / UIKit text views and a SwiftUI editor built on VimCore.
         .library(name: "VimKit", targets: ["VimKit"]),
         .executable(name: "VimKitDemo", targets: ["VimKitDemo"]),
     ],

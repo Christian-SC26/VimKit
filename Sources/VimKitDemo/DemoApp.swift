@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import SwiftUI
 import VimKit
@@ -129,3 +130,9 @@ struct DemoView: View {
     }
     """
 }
+#else
+/// The demo is a macOS app; on other platforms this target does nothing.
+@main enum VimKitDemoUnsupported {
+    static func main() {}
+}
+#endif
