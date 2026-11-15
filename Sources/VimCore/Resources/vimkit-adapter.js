@@ -713,7 +713,8 @@
   // $applyChange on each in turn, shifted, but the document, selections,
   // marks, folds and the host are updated in one pass: re-indenting or
   // undoing 20,000 lines is one batch instead of 20,000 edits. Changes that
-  // are not ascending and apart go through $applyChange one by one.
+  // are not ascending and apart, or fewer than 64, go through $applyChange
+  // one by one.
   proto.$applyChanges = function (changes, fromHost, origin) {
     var len = this.doc.getLength(), froms = [], tos = [], texts = [], last = 0, k;
     for (k = 0; k < changes.length; k += 3) {
@@ -726,7 +727,9 @@
       froms.push(from); tos.push(to); texts.push(text);
       last = to;
     }
-    if (!froms) {
+    // A batch rebuilds the document's text and line index (O(length)); a
+    // few changes are cheaper one by one.
+    if (!froms || froms.length < 64) {
       for (k = 0, shift = 0; k < changes.length; k += 3) {
         this.$applyChange(changes[k] + shift, changes[k + 1] + shift, changes[k + 2], fromHost, origin);
         shift += changes[k + 2].length - (changes[k + 1] - changes[k]);
@@ -734,8 +737,6 @@
       return;
     }
     var n = froms.length;
-    if (!n) return;
-    if (n === 1) { this.$applyChange(froms[0], tos[0], texts[0], fromHost, origin); return; }
 
     if (this.$folds.length) this.$foldsBeforeChanges(froms, tos);
     var whole = this.doc.toString(), parts = [], shifts = new Array(n), lens = new Array(n), shift = 0;

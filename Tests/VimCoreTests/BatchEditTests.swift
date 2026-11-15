@@ -31,9 +31,9 @@ struct BatchEditTests {
 
     @Test func batchedChangesMatchOneByOne() {
         let result = run("""
-        var failure = "ok";
+        var failure = "ok", batched = 0;
         for (var round = 0; round < 200 && failure == "ok"; round++) {
-          var text = randomText(1 + rnd(120));
+          var text = randomText(round % 4 ? 150 + rnd(250) : 1 + rnd(40));   // mostly batches of 64+ changes
           var a = VimKit.createEditor(host(), text, {}), b = VimKit.createEditor(host(), text, {});
           var len = text.length, marks = 1 + rnd(20);
           for (var m = 0; m < marks; m++) {
@@ -50,6 +50,8 @@ struct BatchEditTests {
             changes.push(from, to, inserts[rnd(inserts.length)]);
             pos = to + 1 + rnd(3);
           }
+          if (round % 4 && changes.length < 3 * 64) continue;
+          batched++;
           a.operation(function () { a.$applyChanges(changes, false); });
           b.operation(function () {
             for (var k = 0, shift = 0; k < changes.length; k += 3) {
@@ -65,7 +67,7 @@ struct BatchEditTests {
           a.redo(); b.redo();
           if (state(a) !== state(b)) { failure = "redo, round " + round; break; }
         }
-        failure
+        failure == "ok" && batched < 120 ? "only " + batched + " batches" : failure
         """)
         #expect(result == "ok")
     }
