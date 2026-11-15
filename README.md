@@ -168,6 +168,24 @@ The first jump to the end of a file lays out the whole file once
 1 s. Run `VIMKIT_BENCH=1 swift test --filter PerformanceTests` for the full
 table.
 
+For a full picture run the performance stand (release build, macOS):
+
+```sh
+swift run -c release VimKitBench            # 1,000 and 20,000 lines, ~4 min
+swift run -c release VimKitBench --quick    # a quarter of the repeats
+swift run -c release VimKitBench --help     # sizes, levels, filter, baseline
+```
+
+It runs about 90 operations (motions, search, operators, text objects,
+visual mode, insert, undo, ex commands, macros, folds) plus lifecycle
+costs (runtime, engine and view creation, memory per instance), at two
+levels: `VimEngine` alone and `VimTextView` in a window including layout
+and drawing. For each it records wall time (median, p95, max, first),
+main-thread and process CPU, instructions, IPC, estimated energy, peak
+and retained memory footprint, malloc growth and frames over 16.7 ms.
+Results go to `bench-results/` as JSON and an HTML report that compares
+with the previous run.
+
 How this is kept fast:
 
 * The engine sends a command's edits to the view in one batch, inside one

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `VimKitBench`: a performance stand (`swift run -c release VimKitBench`)
+  that measures time, CPU, instructions, energy and memory for every
+  operation at the engine and view levels and writes an HTML report.
+
 ## 0.2.1 — 2026-11-15
 
 - `o` on a closed fold opens the line after the fold.

@@ -10,6 +10,8 @@ let package = Package(
         // AppKit / UIKit text views and a SwiftUI editor built on VimCore.
         .library(name: "VimKit", targets: ["VimKit"]),
         .executable(name: "VimKitDemo", targets: ["VimKitDemo"]),
+        // Performance stand: `swift run -c release VimKitBench`.
+        .executable(name: "VimKitBench", targets: ["VimKitBench"]),
     ],
     targets: [
         .target(
@@ -23,6 +25,7 @@ let package = Package(
         ),
         .target(name: "VimKit", dependencies: ["VimCore"]),
         .executableTarget(name: "VimKitDemo", dependencies: ["VimKit"]),
+        .executableTarget(name: "VimKitBench", dependencies: ["VimKit"]),
         .testTarget(
             name: "VimCoreTests",
             dependencies: ["VimCore"],
