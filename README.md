@@ -33,7 +33,7 @@ struct ContentView: View {
 Add the package in Xcode (*File → Add Package Dependencies…*) or in `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/Christian-SC26/VimKit.git", from: "0.2.0")
+.package(url: "https://github.com/Christian-SC26/VimKit.git", from: "0.2.1")
 ```
 
 ## Usage
@@ -251,6 +251,8 @@ uses it on iOS.
   while Vim is on.
 
 ## Status and roadmap
+
+What is done and what is planned, in detail: [STATUS.md](STATUS.md).
 
 Working: everything in the test suite (`swift test`) plus the demo app —
 motions, operators, text objects (including tags), registers (including

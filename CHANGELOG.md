@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.1 — 2026-11-15
 
 - `o` on a closed fold opens the line after the fold.
 - Jumps into a closed fold (`G`, `gg`, `<C-d>`, `H`/`M`/`L`, `3G`) keep it
