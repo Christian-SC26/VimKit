@@ -91,6 +91,7 @@ extension BenchMeta {
         if let filter { parts.append("--filter \(filter)") }
         if sizes != [1_000, 20_000] { parts.append("--sizes " + sizes.map(String.init).joined(separator: ",")) }
         if levels != [.engine, .view] { parts.append("--levels " + levels.map(\.rawValue).joined(separator: ",")) }
+        if let foldKernel, foldKernel != "javascript" { parts.append("--fold-kernel \(foldKernel)") }
         return parts.isEmpty ? "полный" : parts.joined(separator: " ")
     }
 }
@@ -99,6 +100,13 @@ extension BenchMeta {
 private let trackedOperations = [
     "zM (свернуть всё)", ":%norm A;", ":%s/value/item/g", "ggVG> (весь файл)", "ggVG= (весь файл)",
     ":g/note 5/d", "zR (развернуть всё)",
+]
+
+/// Fold kernel rows (engine level), compared across languages.
+private let trackedKernels = [
+    ("foldBlocks(): JavaScript", "ядро: foldBlocks JS"), ("foldBlocks(): Swift", "ядро: foldBlocks Swift"),
+    ("foldBlocks(): Goose", "ядро: foldBlocks Goose"), ("чистый расчёт: Swift", "ядро: расчёт Swift"),
+    ("чистый расчёт: Goose", "ядро: расчёт Goose"),
 ]
 
 func writeHistoryMarkdown(_ runs: [BenchRun], to url: URL) throws {
@@ -126,15 +134,17 @@ func writeHistoryMarkdown(_ runs: [BenchRun], to url: URL) throws {
         "«Ожидание» — доля стенного времени операций, прошедшая не на процессоре. «⚠︎ шумно» — больше 8%",
         "(машину грузило что-то ещё, подкачка страниц): стенное время такого прогона завышено, сравнивайте CPU",
         "и инструкции в отчёте.",
+        "«Ядро: …» — поиск блоков для свёрток (zM) на JavaScript, Swift и Goose, уровень движка: «расчёт» —",
+        "только вычисление на готовом UTF-16 буфере, «foldBlocks» — вызов VimEngine.foldBlocks() целиком через мост.",
         "",
     ]
     let header = ["№", "Дата", "Язык", "Что изменилось", "Коммит", "Сборка, режим", "Нагрузка системы", "Прогон, с"]
-        + trackedOperations + ["Медиана операций"]
+        + trackedOperations + ["Медиана операций"] + trackedKernels.map(\.1)
     lines.append("| " + header.map(cell).joined(separator: " | ") + " |")
     lines.append("|" + header.map { _ in "---" }.joined(separator: "|") + "|")
     for run in runs {
         let meta = run.meta
-        let ops = run.results.filter { !$0.lifecycle && $0.category != "Стенд" }
+        let ops = run.results.filter { !$0.lifecycle && $0.category != "Стенд" && $0.category != "Ядро свёрток" }
         let level: Level = ops.contains { $0.level == .view } ? .view : .engine
         let size = ops.filter { $0.level == level }.map(\.lines).max() ?? 0
         let selected = ops.filter { $0.level == level && $0.lines == size }
@@ -149,6 +159,8 @@ func writeHistoryMarkdown(_ runs: [BenchRun], to url: URL) throws {
         ]
         row += trackedOperations.map { name in ms(selected.first { $0.name == name }?.wallMedian) }
         row.append(ms(overall))
+        let kernelRows = run.results.filter { $0.category == "Ядро свёрток" && $0.level == .engine && $0.lines == size }
+        row += trackedKernels.map { name, _ in ms(kernelRows.first { $0.name == name }?.wallMedian) }
         lines.append("| " + row.map(cell).joined(separator: " | ") + " |")
     }
     try (lines.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)

@@ -200,6 +200,19 @@ public final class VimEngine {
 
     // MARK: Options and commands
 
+    /// Indentation blocks of the document, as `zM` finds them: each a
+    /// header line and the last line of the block (0-based, by header).
+    /// ``VimRuntime/foldKernel`` picks the implementation.
+    public func foldBlocks() -> [ClosedRange<Int>] {
+        guard let value = editor.invokeMethod("$foldBlocksFlat", withArguments: []) else { return [] }
+        let ctx = runtime.context.jsGlobalContextRef
+        guard let object = JSValueToObject(ctx, value.jsValueRef, nil),
+              let bytes = JSObjectGetTypedArrayBytesPtr(ctx, object, nil) else { return [] }
+        let count = JSObjectGetTypedArrayLength(ctx, object, nil)
+        let flat = UnsafeBufferPointer(start: bytes.assumingMemoryBound(to: Int32.self), count: count)
+        return stride(from: 0, to: count - 1, by: 2).map { Int(flat[$0])...Int(flat[$0 + 1]) }
+    }
+
     /// Sets an editor option: `tabSize`, `indentUnit`, `indentWithTabs`,
     /// `readOnly`, `lineComment`, `textwidth`.
     public func setOption(_ name: String, _ value: Any) {
@@ -322,6 +335,14 @@ public final class VimEngine {
             self.delegate?.vimEngineFoldsDidChange(self)
         }
 
+        // (text, tabSize) -> Int32Array [header, last, ...] or null: the native fold kernel.
+        let foldBlocks: @convention(block) (JSValue, Double) -> JSValue? = { [weak self] text, tabSize in
+            guard let self else { return nil }
+            return self.runtime.foldScanner.hostBlocks(text, tabSize: Int(tabSize), kernel: self.runtime.foldKernel,
+                                                       context: self.runtime.context)
+        }
+
+        install("foldBlocks", unsafeBitCast(foldBlocks, to: AnyObject.self))
         install("folds", unsafeBitCast(folds, to: AnyObject.self))
         install("tokenType", unsafeBitCast(tokenType, to: AnyObject.self))
         install("edits", unsafeBitCast(edits, to: AnyObject.self))

@@ -59,6 +59,7 @@ let meta = BenchMeta(
     language: options.language,
     note: options.note,
     filter: options.filter,
+    foldKernel: options.foldKernel.rawValue,
     loadAverageStart: loadAtStart,
     loadAverageEnd: Probe.loadAverage(),
     pageins: runner.totalPageins,

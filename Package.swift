@@ -14,8 +14,11 @@ let package = Package(
         .executable(name: "VimKitBench", targets: ["VimKitBench"]),
     ],
     targets: [
+        // C generated from Kernels/*.goose (Kernels/regenerate.sh).
+        .target(name: "VimGooseKernels", exclude: ["GENERATED.txt"]),
         .target(
             name: "VimCore",
+            dependencies: ["VimGooseKernels"],
             exclude: ["Resources/VENDORED.txt"],
             resources: [
                 .copy("Resources/vim.js"),

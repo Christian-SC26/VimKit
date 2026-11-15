@@ -13,6 +13,13 @@ public final class VimRuntime {
     /// Storage for the `+` and `*` registers.
     public var clipboard: any VimClipboard = SystemClipboard()
 
+    /// Implementation that finds indentation blocks for folds (`zM`, `zc`,
+    /// ``VimEngine/foldBlocks()``). The results are identical.
+    public var foldKernel: VimFoldKernel = .javascript
+
+    /// Buffers of the native fold kernels, shared by this runtime's editors.
+    let foldScanner = VimFoldBlockScanner()
+
     /// Receives console output and JavaScript exceptions from the engine.
     /// By default warnings and errors are printed.
     public var log: (VimLogLevel, String) -> Void = { level, message in

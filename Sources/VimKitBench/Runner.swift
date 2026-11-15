@@ -1,7 +1,7 @@
 #if os(macOS)
 import AppKit
 import Foundation
-import VimCore
+@_spi(Benchmarks) import VimCore
 import VimKit
 
 struct BenchResult: Codable, Sendable {
@@ -67,6 +67,8 @@ struct BenchMeta: Codable, Sendable {
     /// What changed since the previous run.
     var note: String?
     var filter: String?
+    /// Fold kernel the run used for zM (`VimRuntime.foldKernel`).
+    var foldKernel: String?
     /// 1-minute load average before and after the run; high values mean other work competed.
     var loadAverageStart: Double?
     var loadAverageEnd: Double?
@@ -92,6 +94,7 @@ struct BenchOptions {
     var language = "JS"
     var note: String?
     var historyDirectory = "Benchmarks/history"
+    var foldKernel: VimFoldKernel = .javascript
 
     static func parse(_ arguments: [String]) -> BenchOptions {
         var options = BenchOptions()
@@ -110,6 +113,13 @@ struct BenchOptions {
             case "--lang": options.language = iterator.next() ?? options.language
             case "--note": options.note = iterator.next()
             case "--history": options.historyDirectory = iterator.next() ?? options.historyDirectory
+            case "--fold-kernel":
+                let name = iterator.next() ?? ""
+                guard let kernel = VimFoldKernel(rawValue: name == "js" ? "javascript" : name) else {
+                    FileHandle.standardError.write(Data("--fold-kernel: js, swift или goose\n".utf8))
+                    exit(2)
+                }
+                options.foldKernel = kernel
             case "-h", "--help":
                 print("""
                 VimKitBench — стенд производительности VimKit.
@@ -124,6 +134,7 @@ struct BenchOptions {
                   --lang язык             на каком языке сделано изменение: JS, Swift, Goose… (JS)
                   --note "текст"          что изменилось с прошлого прогона
                   --history каталог       история прогонов с номерами (Benchmarks/history)
+                  --fold-kernel ядро      js, swift или goose: чем zM ищет блоки (js)
                   --baseline файл.json    с чем сравнивать (по умолчанию — предыдущий
                                           прогон из истории с той же сборкой и режимом)
                   --no-open               не открывать отчёт в браузере
@@ -160,6 +171,7 @@ final class Runner {
         self.options = options
         runtime = VimRuntime()
         runtime.clipboard = InMemoryClipboard()
+        runtime.foldKernel = options.foldKernel
         runtime.log = { [weak self] level, message in
             guard level >= .warning, let self else { return }
             self.jsErrors += 1
@@ -173,11 +185,13 @@ final class Runner {
             return scenario.name.lowercased().contains(filter) || scenario.category.lowercased().contains(filter)
         }
         let lifecycleSteps = options.filter == nil ? 1 + options.sizes.count * 6 : 0
-        totalSteps = lifecycleSteps + selected.count * options.sizes.count * options.levels.count
+        let kernelSteps = runsKernels ? options.sizes.count * 5 : 0
+        totalSteps = lifecycleSteps + kernelSteps + selected.count * options.sizes.count * options.levels.count
         runStart = Probe.rusage()
         let wallStart = Probe.wallNanoseconds
         defer { estimateEnergy(wallStart: wallStart) }
         if options.filter == nil { runLifecycle() }
+        if runsKernels { runKernels() }
         for lines in options.sizes {
             let text = sampleCode(lines: lines)
             for level in options.levels {
@@ -220,6 +234,51 @@ final class Runner {
 
     private func repeats(_ count: Int) -> Int {
         options.quick ? max(1, count / 4) : count
+    }
+
+    // MARK: Kernels
+
+    private var runsKernels: Bool {
+        guard let filter = options.filter?.lowercased() else { return true }
+        return "ядро свёрток foldblocks kernel".contains(filter)
+    }
+
+    /// The fold-block kernels side by side: pure computation on one UTF-16
+    /// buffer (Swift vs Goose), and `VimEngine.foldBlocks()` end to end with
+    /// each kernel (JavaScript works on the document's lines; Swift and Goose
+    /// read the text across the bridge and send back an Int32Array).
+    private func runKernels() {
+        let category = "Ядро свёрток"
+        let scanner = VimFoldBlockScanner()
+        for lines in options.sizes {
+            let text = sampleCode(lines: lines)
+            let utf16 = Array(text.utf16)
+            utf16.withUnsafeBufferPointer { buffer in
+                for kernel in [VimFoldKernel.swift, .goose] {
+                    scanner.scan(buffer, tabSize: 4, kernel: kernel) // buffers sized, Goose runtime started
+                    record(measure(category: category, name: "чистый расчёт: \(Self.label(kernel))", keys: "",
+                                   level: .engine, lines: lines, lifecycle: false, repeats: repeats(50),
+                                   operation: { scanner.scan(buffer, tabSize: 4, kernel: kernel) }))
+                }
+            }
+            let engine = VimEngine(text: text, runtime: runtime)
+            for kernel in VimFoldKernel.allCases {
+                runtime.foldKernel = kernel
+                _ = engine.foldBlocks()
+                record(measure(category: category, name: "foldBlocks(): \(Self.label(kernel))", keys: "",
+                               level: .engine, lines: lines, lifecycle: false, repeats: repeats(20),
+                               operation: { _ = engine.foldBlocks() }))
+            }
+            runtime.foldKernel = options.foldKernel
+        }
+    }
+
+    static func label(_ kernel: VimFoldKernel) -> String {
+        switch kernel {
+        case .javascript: "JavaScript"
+        case .swift: "Swift"
+        case .goose: "Goose"
+        }
     }
 
     // MARK: Lifecycle

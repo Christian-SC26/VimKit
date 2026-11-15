@@ -1435,7 +1435,27 @@
   // headers still open. A non-blank line closes every header indented at
   // least as deep; their blocks end at the previous non-blank line, or on
   // this line when it is a closing bracket at the header's indentation.
+  // The host may compute them natively (VimRuntime.foldKernel): it gets the
+  // text and returns an Int32Array of [header, last, ...], or null.
   proto.$allBlocks = function () {
+    var flat = this.$nativeBlocks();
+    if (!flat) return this.$allBlocksJS();
+    var blocks = new Array(flat.length >> 1);
+    for (var i = 0; i < blocks.length; i++) blocks[i] = { header: flat[2 * i], last: flat[2 * i + 1] };
+    return blocks;
+  };
+  proto.$nativeBlocks = function () {
+    return this.host.foldBlocks ? this.host.foldBlocks(this.doc.toString(), this.options.tabSize) : null;
+  };
+  // For VimEngine.foldBlocks(): the blocks as an Int32Array of [header, last, ...].
+  proto.$foldBlocksFlat = function () {
+    var flat = this.$nativeBlocks();
+    if (flat) return flat;
+    var blocks = this.$allBlocksJS(), out = new Int32Array(blocks.length * 2);
+    for (var i = 0; i < blocks.length; i++) { out[2 * i] = blocks[i].header; out[2 * i + 1] = blocks[i].last; }
+    return out;
+  };
+  proto.$allBlocksJS = function () {
     var blocks = [], stack = [], prev = -1, lastLine = this.lastLine();
     for (var i = 0; i <= lastLine; i++) {
       var d = this.$indentOf(i);
