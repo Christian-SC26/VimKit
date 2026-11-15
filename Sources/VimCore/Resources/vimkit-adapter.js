@@ -369,6 +369,27 @@
       this.value = null;
       return;
     }
+    var st = this.starts, removedLines = b.line - a.line + 1, m = inserted.length;
+    if (st && m <= 4096) {
+      // Make starts up to b.line exact and those after it `pending` too small,
+      // splice in the starts of the inserted lines, and defer the shift of the
+      // rest: deleting lines one by one down a file (:g/x/d) stays O(lines)
+      // in total instead of re-indexing the whole file after each one.
+      var k;
+      if (this.pending === 0) { /* every start is exact */ }
+      else if (this.pivot < b.line) { for (k = this.pivot + 1; k <= b.line; k++) st[k] += this.pending; }
+      else { for (k = b.line + 1; k <= this.pivot; k++) st[k] -= this.pending; }
+      var fresh = new Array(m), offset = st[a.line];
+      for (k = 0; k < m; k++) { fresh[k] = offset; offset += inserted[k].length + 1; }
+      st.splice.apply(st, [a.line, removedLines].concat(fresh));
+      this.lines.splice.apply(this.lines, [a.line, removedLines].concat(inserted));
+      var delta = text.length - (to - from);
+      this.pivot = a.line + m - 1;
+      this.pending += delta;
+      this.length += delta;
+      this.value = null;
+      return;
+    }
     this.lines = this.lines.slice(0, a.line).concat(inserted, this.lines.slice(b.line + 1));
     this.invalidate();
   };
@@ -687,6 +708,92 @@
     if (this.searchQuery) this.$searchDirty = true;
   };
 
+  // Many changes at once: `changes` is flat [from, to, text, ...] in the
+  // coordinates of the text before all of them. The effect is that of
+  // $applyChange on each in turn, shifted, but the document, selections,
+  // marks, folds and the host are updated in one pass: re-indenting or
+  // undoing 20,000 lines is one batch instead of 20,000 edits. Changes that
+  // are not ascending and apart go through $applyChange one by one.
+  proto.$applyChanges = function (changes, fromHost, origin) {
+    var len = this.doc.getLength(), froms = [], tos = [], texts = [], last = 0, k;
+    for (k = 0; k < changes.length; k += 3) {
+      var from = changes[k], to = changes[k + 1], text = changes[k + 2];
+      if (from < last || to < from || to > len || (froms.length && from === froms[froms.length - 1])) {
+        froms = null;
+        break;
+      }
+      if (from === to && !text) continue;
+      froms.push(from); tos.push(to); texts.push(text);
+      last = to;
+    }
+    if (!froms) {
+      for (k = 0, shift = 0; k < changes.length; k += 3) {
+        this.$applyChange(changes[k] + shift, changes[k + 1] + shift, changes[k + 2], fromHost, origin);
+        shift += changes[k + 2].length - (changes[k + 1] - changes[k]);
+      }
+      return;
+    }
+    var n = froms.length;
+    if (!n) return;
+    if (n === 1) { this.$applyChange(froms[0], tos[0], texts[0], fromHost, origin); return; }
+
+    if (this.$folds.length) this.$foldsBeforeChanges(froms, tos);
+    var whole = this.doc.toString(), parts = [], shifts = new Array(n), lens = new Array(n), shift = 0;
+    var selBefore = this.sel.ranges.map(function (r) { return { anchor: r.anchor, head: r.head }; });
+    var curOp = this.curOp = this.curOp || {};
+    if (!curOp.changeHandlers)
+      curOp.changeHandlers = this._handlers["change"] && this._handlers["change"].slice();
+    last = 0;
+    for (k = 0; k < n; k++) {
+      shifts[k] = shift;
+      lens[k] = texts[k].length;
+      parts.push(whole.slice(last, froms[k]), texts[k]);
+      this.history.record(froms[k] + shift, whole.slice(froms[k], tos[k]), texts[k], selBefore);
+      var change = { text: texts[k].split("\n"), origin: origin };
+      if (!curOp.lastChange) curOp.lastChange = curOp.change = change;
+      else curOp.lastChange.next = curOp.lastChange = change;
+      shift += lens[k] - (tos[k] - froms[k]);
+      last = tos[k];
+    }
+    parts.push(whole.slice(last));
+    var value = parts.join("");
+    this.doc.setText(value);
+    this.doc.value = value;
+
+    // Old offset -> new: through the last change that starts at or before it.
+    function map(pos, assoc, mode) {
+      if (pos == null) return pos;
+      var lo = 0, hi = n - 1, i = -1;
+      while (lo <= hi) {
+        var mid = (lo + hi) >> 1;
+        if (froms[mid] <= pos) { i = mid; lo = mid + 1; } else hi = mid - 1;
+      }
+      if (i < 0) return pos;
+      var s = shifts[i];
+      return mapPos(pos + s, froms[i] + s, tos[i] + s, lens[i], assoc, mode);
+    }
+    this.sel.ranges.forEach(function (r) { r.anchor = map(r.anchor, 1); r.head = map(r.head, 1); });
+    for (var id in this.marks) {
+      var mark = this.marks[id];
+      if (mark.offset != null) mark.offset = map(mark.offset, mark.assoc, "del");
+    }
+    if (this.$lineHandles) {
+      this.$lineHandles.forEach(function (h) { if (h.index != null) h.index = map(h.index, 1, "after"); });
+    }
+    if (this.virtualSelection) {
+      this.virtualSelection.ranges.forEach(function (r) { r.anchor = map(r.anchor, 1); r.head = map(r.head, 1); });
+    }
+    this.$lastChangeEndOffset = froms[n - 1] + shifts[n - 1] + lens[n - 1];
+    this.$layoutCache = null;
+    if (curOp.$changeStart == null || curOp.$changeStart > froms[0]) curOp.$changeStart = froms[0];
+    if (curOp.$scroll) curOp.$scroll.offset = map(curOp.$scroll.offset, 1);
+    if (!fromHost) {
+      this.$selDirty = true;
+      this.$queueEdit(froms[0], tos[n - 1], value.slice(froms[0], tos[n - 1] + shift), len);
+    }
+    if (this.searchQuery) this.$searchDirty = true;
+  };
+
   // ---- edits sent to the host ---------------------------------------------------------
   //
   // Edits are queued and sent in one `host.edits([from, to, text, ...])` call
@@ -799,8 +906,11 @@
     history.suppressed++;
     var start = Infinity;
     try {
-      var changes = group.changes;
-      if (invert) {
+      var changes = group.changes, batch = changes.length >= 64 ? this.$historyBatch(changes, invert) : null;
+      if (batch) {
+        this.$applyChanges(batch, false);
+        start = batch[0];
+      } else if (invert) {
         for (var i = changes.length - 1; i >= 0; i--) {
           var c = changes[i];
           this.$applyChange(c.from, c.from + c.inserted.length, c.removed, false);
@@ -819,6 +929,22 @@
     to.push(group);
     if (start !== Infinity) this.$setSel([{ anchor: start, head: start }], 0);
     this.$afterDispatch();
+  };
+  // A history group as one $applyChanges batch (offsets before the replay),
+  // or null when its changes are not ascending and apart.
+  proto.$historyBatch = function (changes, invert) {
+    var flat = new Array(changes.length * 3), shift = 0, end = -1;
+    for (var i = 0; i < changes.length; i++) {
+      var c = changes[i], from = invert ? c.from : c.from - shift;
+      if (from < end || (i && from <= flat[3 * (i - 1)])) return null;
+      var removedLength = invert ? c.inserted.length : c.removed.length;
+      flat[3 * i] = from;
+      flat[3 * i + 1] = from + removedLength;
+      flat[3 * i + 2] = invert ? c.removed : c.inserted;
+      end = from + removedLength;
+      shift += c.inserted.length - c.removed.length;
+    }
+    return flat;
   };
   proto.undo = function () { this.$undoing = true; this.$runHistory(this.history.done, this.history.undone, true); };
   proto.redo = function () { this.$undoing = true; this.$runHistory(this.history.undone, this.history.done, false); };
@@ -1134,26 +1260,73 @@
     if (/^[ \t]*[)\]}]/.test(this.getLine(n))) col = Math.max(0, col - unit);
     return col;
   };
-  // Re-indents the selected lines (Vim's `=`).
-  proto.indentAuto = function () {
-    var cm = this;
+  // Re-indents the selected lines: mode 0 is `<`, 1 is `>`, 2 is `=`.
+  // The new columns come from $indentPlan; the lines change in one batch.
+  proto.$reindent = function (mode) {
+    var cm = this, lines = this.$selectedLines().sort(function (a, b) { return a - b; });
+    var plan = this.$indentPlan(lines, mode), indents = {}, changes = [];
+    for (var i = 0; i < lines.length; i++) {
+      var col = plan[2 * i + 1], length = plan[2 * i];
+      if (col < 0 || length < 0) continue;
+      var indent = indents[col];
+      if (indent == null) indent = indents[col] = this.$makeIndent(col);
+      var text = this.doc.lines[lines[i]];
+      if (length === indent.length && text.slice(0, length) === indent) continue;
+      var start = this.doc.lineStart(lines[i]);
+      changes.push(start, start + length, indent);
+    }
+    if (!changes.length) return;
     this.operation(function () {
-      cm.$selectedLines().sort(function (a, b) { return a - b; }).forEach(function (l) {
-        var text = cm.getLine(l);
-        if (!/\S/.test(text)) return;
-        var current = /^[ \t]*/.exec(text)[0], indent = cm.$makeIndent(cm.$autoIndentColumn(l));
-        if (indent !== current) cm.replaceRange(indent, new Pos(l, 0), new Pos(l, current.length));
-      });
+      cm.$applyChanges(changes, false);
+      cm.$afterDispatch();
     });
   };
-  proto.indentMore = function () {
-    var cm = this;
-    this.operation(function () { cm.$selectedLines().forEach(function (l) { cm.indentLine(l, true); }); });
+  // [length of the leading spaces and tabs, new column, ...] per line of
+  // `lines` (ascending); column -1 leaves a line alone (blank lines for `=`).
+  // Many lines go to the host's native kernel (VimIndentKernel in Swift).
+  proto.$indentPlan = function (lines, mode) {
+    var tab = this.getOption("tabSize"), unit = this.getOption("indentUnit");
+    if (lines.length >= 32 && this.host.indentPlan) {
+      var plan = this.host.indentPlan(this.doc.toString(), new Int32Array(lines), mode, tab, unit);
+      if (plan && plan.length === lines.length * 2) return plan;
+    }
+    return this.$indentPlanJS(lines, mode, tab, unit);
   };
-  proto.indentLess = function () {
-    var cm = this;
-    this.operation(function () { cm.$selectedLines().forEach(function (l) { cm.indentLine(l, false); }); });
+  // The same plan in JavaScript; `=` follows $autoIndentColumn, seeing the
+  // lines above as already re-indented.
+  proto.$indentPlanJS = function (lines, mode, tab, unit) {
+    var out = new Int32Array(lines.length * 2), cols = {};
+    for (var i = 0; i < lines.length; i++) {
+      var l = lines[i], text = this.getLine(l), prefix = /^[ \t]*/.exec(text)[0], col = -1;
+      if (mode < 2) {
+        var current = countColumn(prefix, tab);
+        col = mode ? current + unit : Math.max(0, current - unit);
+      } else if (/\S/.test(text)) {
+        col = 0;
+        var prev = l - 1;
+        while (prev >= 0 && !/\S/.test(this.getLine(prev))) prev--;
+        if (prev >= 0) {
+          var above = this.getLine(prev), depth = 0;
+          col = prev in cols ? cols[prev] : countColumn(/^[ \t]*/.exec(above)[0], tab);
+          for (var j = 0; j < above.length; j++) {
+            var c = above.charAt(j);
+            if (c == "(" || c == "[" || c == "{") depth++;
+            else if ((c == ")" || c == "]" || c == "}") && depth > 0) depth--;
+          }
+          if (depth > 0) col += unit;
+        }
+        if (/^[ \t]*[)\]}]/.test(text)) col = Math.max(0, col - unit);
+        cols[l] = col;
+      }
+      out[2 * i] = prefix.length;
+      out[2 * i + 1] = col;
+    }
+    return out;
   };
+  // Re-indents the selected lines (Vim's `=`).
+  proto.indentAuto = function () { this.$reindent(2); };
+  proto.indentMore = function () { this.$reindent(1); };
+  proto.indentLess = function () { this.$reindent(0); };
   proto.toggleLineComment = function () {
     var token = this.getOption("lineComment");
     if (!token) return;
@@ -1346,6 +1519,24 @@
     for (var i = this.$folds.length - 1; i >= 0; i--) {
       var f = this.$folds[i], h = f.head.offset, t = f.tail.offset;
       if ((from < h && h < to) || (from < t && t < to) || (from <= h && t <= to && from < to)) this.$removeFold(f);
+    }
+    this.$foldChanged();
+  };
+  // $foldsBeforeChange for ascending, non-overlapping changes (old offsets).
+  proto.$foldsBeforeChanges = function (froms, tos) {
+    var n = froms.length;
+    function lastFrom(p, strict) {
+      var lo = 0, hi = n - 1, k = -1;
+      while (lo <= hi) {
+        var mid = (lo + hi) >> 1;
+        if (strict ? froms[mid] < p : froms[mid] <= p) { k = mid; lo = mid + 1; } else hi = mid - 1;
+      }
+      return k;
+    }
+    for (var i = this.$folds.length - 1; i >= 0; i--) {
+      var f = this.$folds[i], h = f.head.offset, t = f.tail.offset, a = lastFrom(h, true), b = lastFrom(t, true),
+        c = lastFrom(h, false);
+      if ((a >= 0 && h < tos[a]) || (b >= 0 && t < tos[b]) || (c >= 0 && t <= tos[c] && froms[c] < tos[c])) this.$removeFold(f);
     }
     this.$foldChanged();
   };

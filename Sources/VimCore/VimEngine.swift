@@ -342,6 +342,14 @@ public final class VimEngine {
                                                        context: self.runtime.context)
         }
 
+        // (text, Int32Array lines, mode, tabSize, unit) -> Int32Array: `>`, `<`, `=` over many lines.
+        let indentPlan: @convention(block) (JSValue, JSValue, Double, Double, Double) -> JSValue? = { [weak self] text, lines, mode, tabSize, unit in
+            guard let self else { return nil }
+            return VimIndentKernel.hostPlan(text, lines, mode: Int(mode), tabSize: Int(tabSize), unit: Int(unit),
+                                            context: self.runtime.context)
+        }
+
+        install("indentPlan", unsafeBitCast(indentPlan, to: AnyObject.self))
         install("foldBlocks", unsafeBitCast(foldBlocks, to: AnyObject.self))
         install("folds", unsafeBitCast(folds, to: AnyObject.self))
         install("tokenType", unsafeBitCast(tokenType, to: AnyObject.self))
