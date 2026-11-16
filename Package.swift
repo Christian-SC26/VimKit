@@ -36,6 +36,8 @@ let package = Package(
                 .copy("Resources/vim_test.js"),
                 .copy("Resources/upstream-harness.js"),
                 .copy("Resources/upstream-known-failures.txt"),
+                .copy("Resources/oracle-expected.json"),
+                .copy("Resources/oracle-known-divergences.txt"),
             ]
         ),
         .testTarget(name: "VimKitTests", dependencies: ["VimKit"]),

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Vim oracle: `OracleTests` replays 274 cases from `Tests/Oracle/cases.txt`
+  and compares them with what real Vim 9.2 does, as recorded in
+  `oracle-expected.json` by `Tests/Oracle/regenerate.sh`, which also lists
+  where Neovim differs (`Tests/Oracle/NEOVIM.md`). 201 match; the 73
+  differences are listed by cause in `oracle-known-divergences.txt`.
 - Registers as in Vim: `"*`/`"+` on the clipboard (`'clipboard'`
   unnamed/unnamedplus), `"%`/`"#` from `VimEngine.fileName` /
   `alternateFileName`, the expression register `"=` (numbers, strings,

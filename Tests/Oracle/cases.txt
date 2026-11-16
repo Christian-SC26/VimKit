@@ -1,0 +1,1354 @@
+# Cases for the Vim oracle. Real Vim plays each one (regenerate.sh) and
+# OracleTests replays it in VimKit and compares the text, the cursor, the
+# mode and the unnamed register.
+#
+#   [name]          a unique name
+#   keys <keys>     keys in Vim notation, the rest of the line: dw, ciwx<Esc>,
+#                   :s/a/b/<CR>, <C-v>, <lt> for a literal <, <Space> for a
+#                   trailing space
+#   at <line> <col> where the cursor starts, 1-based (default 1 1)
+#   | text          the text, one line each ("|" alone is an empty line)
+#
+# End in normal mode: finish insert with <Esc> and visual with an operator.
+# Leave out what depends on the window (H, M, L, scrolling, gj).
+# After editing, run Tests/Oracle/regenerate.sh and commit the JSON.
+
+# ---- Motions ----------------------------------------------------------------
+
+[w-punctuation]
+keys wwww
+| foo.bar(baz) qux
+
+[W-bigword]
+keys WW
+| foo.bar(baz) qux-x end
+
+[b-back]
+keys bbb
+at 1 17
+| foo.bar(baz) qux
+
+[e-end]
+keys eee
+| foo.bar(baz) qux
+
+[ge-back-end]
+keys gege
+at 1 14
+| foo.bar(baz) qux
+
+[3w-across-lines]
+keys 3w
+| one two
+| three four
+
+[w-skips-empty-line-no]
+keys ww
+| one
+|
+| two
+
+[0-caret-dollar]
+keys $^
+|     text   end
+| x
+
+[caret-indent]
+keys ^
+at 1 10
+|     indented line
+
+[g_-last-nonblank]
+keys g_
+| text with trail   
+
+[bar-column]
+keys 7|
+| 0123456789
+
+[f-t-semicolon]
+keys fo;;
+| foo boo zoo
+
+[t-repeat-skips-adjacent]
+keys tx;
+| a-x-xb-x
+
+[F-T-comma]
+keys Fa,
+at 1 10
+| a1 a2 a3 a4
+
+[percent-bracket]
+keys %
+| if (a[1] == {b}) x
+
+[percent-from-before]
+keys %
+| call(x, [y])
+
+[percent-inner]
+keys f[%
+| call(x, [y])
+
+[gg-G]
+keys Ggg
+at 2 3
+| one
+|   two
+| three
+
+[count-G]
+keys 3G
+| a
+| b
+|     c
+| d
+
+[ex-line-number]
+keys :3<CR>
+| a
+| b
+|   c
+
+[paragraph-forward]
+keys }}
+| one
+| two
+|
+| three
+|
+| four
+
+[paragraph-back]
+keys {{
+at 6 1
+| one
+|
+| two
+| three
+|
+| four
+
+[sentence-forward]
+keys ))
+| One. Two three. Four!  Five?
+
+[sentence-back]
+keys ((
+at 1 25
+| One. Two three. Four!  Five?
+
+[plus-minus]
+keys +++-
+| a
+|   b
+|     c
+|   d
+
+[underscore-count]
+keys 3_
+| a
+|  b
+|   c
+
+[curswant-short-line]
+keys 8ljj
+| long line here
+| ab
+| another long line
+
+[dollar-sticky]
+keys $jj
+| short
+| a much longer line
+| mid line
+
+[star-search]
+keys *
+| foo bar foo foobar foo
+
+[hash-search]
+keys $#
+| foo bar foo foobar foo
+
+[star-n-wraps]
+keys *nn
+| foo bar foo foobar foo
+
+[search-forward]
+keys /bar<CR>
+| foo bar baz bar
+
+[search-n-N]
+keys /bar<CR>nN
+| foo bar baz bar bar
+
+[search-backward]
+keys $?ba<CR>
+| foo bar baz qux
+
+[search-offset-end]
+keys /bar/e<CR>
+| foo bar baz
+
+[search-offset-line]
+keys /two/+1<CR>
+| one
+| two
+|   three
+
+[search-case-sensitive]
+keys /Foo<CR>
+| foo FOO Foo
+
+[search-lowercase-matches-exact-case]
+keys /foo<CR>
+| FOO foo
+
+[search-regex-word-boundary]
+keys /\<in\><CR>
+| main in inside
+
+[search-very-magic]
+keys /\v(ab)+c<CR>
+| x abc ababc
+
+[mark-backtick]
+keys lllmajj`a
+| abcdef
+| ghi
+| jkl
+
+[mark-quote]
+keys lllmajj'a
+|    abcdef
+| ghi
+| jkl
+
+[jump-back-backtick]
+keys G``
+at 1 3
+| abc
+| def
+| ghi
+
+[go-byte]
+keys 6go
+| abc
+| def
+
+# ---- Operators and counts ---------------------------------------------------
+
+[dw-last-word]
+keys wdw
+| one two
+| three
+
+[dw-count]
+keys d3w
+| a b c d e
+
+[2d3w]
+keys 2d3w
+| a b c d e f g h
+
+[cw-acts-like-ce]
+keys cwX<Esc>
+| foo bar
+
+[cw-on-space]
+keys lllcwX<Esc>
+| foo   bar
+
+[cW]
+keys cWX<Esc>
+| foo.bar baz
+
+[dd-count]
+keys 2dd
+| a
+| b
+| c
+
+[dd-last-line]
+keys Gdd
+| a
+| b
+| c
+
+[dj]
+keys jdj
+| a
+| b
+| c
+| d
+
+[dk]
+keys jdk
+| a
+| b
+| c
+
+[dG]
+keys jdG
+| a
+| b
+| c
+
+[dgg]
+keys jdgg
+| a
+| b
+| c
+
+[D]
+keys llD
+| abcdef
+
+[2D]
+keys ll2D
+| abcdef
+| ghi
+| jkl
+
+[C]
+keys llCX<Esc>
+| abcdef
+
+[x-count]
+keys 3x
+| abcdef
+
+[x-at-end]
+keys $x
+| abc
+
+[X]
+keys $2X
+| abcdef
+
+[s-subst]
+keys 2sXY<Esc>
+| abcdef
+
+[S-keeps-indent]
+keys SX<Esc>
+|     indented
+
+[cc]
+keys ccX<Esc>
+|     indented
+
+[yy-p]
+keys yyjp
+| a
+| b
+
+[yy-P-count]
+keys yy2P
+| a
+| b
+
+[yw-P]
+keys wywP
+| one two three
+
+[ddp-swap]
+keys ddp
+| first
+| second
+
+[xp-swap]
+keys xp
+| ab
+
+[p-characterwise-multiline]
+keys vjy$p
+| abc
+| def
+
+[J]
+keys J
+| one
+|     two
+
+[J-count]
+keys 3J
+| a
+| b
+| c
+| d
+
+[J-paren]
+keys J
+| foo(
+| )
+
+[J-trailing-space]
+keys J
+| one   
+| two
+
+[gJ]
+keys gJ
+| one
+|     two
+
+[r]
+keys rx
+| abc
+
+[r-count]
+keys 3rx
+| abcd
+
+[r-newline]
+keys lr<CR>
+| ab cd
+
+[tilde]
+keys ~~~
+| abc
+
+[g-tilde-word]
+keys g~w
+| Hello World
+
+[gUiw]
+keys gUiw
+| hello world
+
+[guu]
+keys guu
+| HELLO World
+
+[gUU]
+keys gUU
+| hello world
+
+[g-question-rot13]
+keys g??
+| Hello
+
+[indent-right]
+keys >>
+| text
+
+[indent-left]
+keys <<
+|         text
+
+[indent-count]
+keys 3>>
+| a
+| b
+| c
+| d
+
+[indent-paragraph]
+keys >ip
+| a
+| b
+|
+| c
+
+[dt-df]
+keys dt)
+| f(abc)
+
+[df]
+keys df,
+| a, b, c
+
+[dT]
+keys $dTa
+| abcdef
+
+[d-search]
+keys d/x<CR>
+| abc x def
+
+[d-percent]
+keys d%
+| (a (b) c) d
+
+[c-count-word]
+keys c2wX<Esc>
+| a b c d
+
+[dot-dw]
+keys dw..
+| a b c d e
+
+[dot-ciw]
+keys ciwX<Esc>w.
+| foo bar baz
+
+[dot-A]
+keys A;<Esc>j.
+| a
+| b
+
+[dot-count]
+keys x3.
+| abcdefg
+
+[dot-new-count]
+keys 2dw.
+| a b c d e f
+
+[equal-keeps-prev-indent]
+keys j==
+|     a
+| b
+
+# ---- Registers --------------------------------------------------------------
+
+[named-register]
+keys "ayyj"ap
+| a
+| b
+
+[append-register]
+keys "ayyj"Ayy"ap
+| a
+| b
+
+[yank-register-0]
+keys yyjdd"0p
+| keep
+| drop
+| end
+
+[numbered-shift]
+keys dddd"2p
+| one
+| two
+| three
+
+[small-delete-register]
+keys dwdd"-p
+| ab cd
+| ef
+
+[blackhole]
+keys yyj"_ddp
+| keep
+| gone
+| end
+
+[viwp-swaps-register]
+keys yiwwviwp
+| one two
+
+[viwp-repeat-paste]
+keys yiwwviwpwviwp
+| one two three
+
+[dot-register]
+keys ihello<Esc>".p
+| x
+
+[colon-register]
+keys :s/a/b/<CR>j@:
+| a
+| a
+
+[insert-ctrl-r]
+keys yiwA <C-r>"<Esc>
+| word
+
+[let-register]
+keys :let @a='iX<lt>Esc>'<CR>@a
+| abc
+
+# ---- Text objects -----------------------------------------------------------
+
+[diw]
+keys wdiw
+| one two three
+
+[daw]
+keys wdaw
+| one two three
+
+[daw-at-end]
+keys $daw
+| one two three
+
+[diW]
+keys wdiW
+| one foo.bar three
+
+[daW]
+keys wdaW
+| one foo.bar three
+
+[diw-on-space]
+keys lllldiw
+| one    two
+
+[di-paren]
+keys fbdi(
+| f(a, b)
+
+[da-paren]
+keys fbda(
+| f(a, b)
+
+[ci-paren-multiline]
+keys jci{X<Esc>
+| x {
+|     a
+|     b
+| }
+
+[di-brace-linewise]
+keys jdi{
+| x {
+|     a
+|     b
+| }
+
+[d2i-paren]
+keys fbd2i(
+| f(a(b) c)
+
+[di-bracket]
+keys fbdi[
+| x[a, b]
+
+[di-angle]
+keys fbdi<lt>
+| x<a, b>
+
+[ci-quote-ahead]
+keys ci"X<Esc>
+| say "hello" now
+
+[di-quote-escaped]
+keys fbdi"
+| s = "a \"b\" c"
+
+[da-quote-space]
+keys fhda"
+| x "hello" y
+
+[di-single-quote]
+keys fadi'
+| x 'abc' y
+
+[di-backtick]
+keys fadi`
+| x `abc` y
+
+[dit]
+keys fxdit
+| <a><b>x</b></a>
+
+[dat]
+keys fxdat
+| <a><b>x</b></a>
+
+[dis]
+keys fTdis
+| One two. Three four. Five.
+
+[das]
+keys fTdas
+| One two. Three four. Five.
+
+[dip]
+keys jdip
+| a
+| b
+|
+| c
+
+[dap]
+keys dap
+| a
+| b
+|
+| c
+
+[yi-paren-register]
+keys fayi(
+| (abc)
+
+# ---- Visual mode ------------------------------------------------------------
+
+[v-d]
+keys vjd
+| abc
+| def
+
+[V-d]
+keys Vjd
+| a
+| b
+| c
+
+[v-dollar-y]
+keys lv$y
+| abc
+| d
+
+[v-count-l]
+keys v3ld
+| abcdef
+
+[v-o]
+keys lvlohd
+| abcdef
+
+[gv]
+keys vly<Esc>$gvd
+| abcdef
+
+[v-iw-tilde]
+keys viw~
+| hello world
+
+[V-U]
+keys VU
+| hello
+
+[v-J]
+keys VjjJ
+| a
+| b
+| c
+
+[v-indent]
+keys Vj>
+| a
+| b
+
+[v-indent-count]
+keys V2>
+| a
+
+[v-p-replace]
+keys yiwwvep
+| foo bar
+
+[v-p-linewise-into-char]
+keys yyjviwp
+| line
+| a b c
+
+[v-c]
+keys vecX<Esc>
+| foo bar
+
+[v-r]
+keys v2lrx
+| abcd
+
+[v-ip]
+keys vipd
+| a
+| b
+|
+| c
+
+[v-dot-repeat]
+keys vld.
+| abcdefgh
+
+[ctrl-v-d]
+keys l<C-v>jld
+| abcd
+| efgh
+| ijkl
+
+[ctrl-v-I]
+keys l<C-v>jjIX<Esc>
+| abcd
+| efgh
+| ijkl
+
+[ctrl-v-A-dollar]
+keys <C-v>jj$AX<Esc>
+| ab
+| abcd
+| a
+
+[ctrl-v-A]
+keys <C-v>jlAX<Esc>
+| abcd
+| efgh
+
+[ctrl-v-r]
+keys <C-v>jlrx
+| abcd
+| efgh
+
+[ctrl-v-c]
+keys l<C-v>jlcX<Esc>
+| abcd
+| efgh
+
+[ctrl-v-y-p]
+keys <C-v>jly$p
+| abcd
+| efgh
+
+[ctrl-v-short-lines]
+keys ll<C-v>jjd
+| abcd
+| a
+| efgh
+
+[v-gU]
+keys veU
+| hello world
+
+[v-gJ]
+keys VjgJ
+| a
+|   b
+
+[v-ex-range]
+keys Vj:d<CR>
+| a
+| b
+| c
+
+[v-increment-column]
+keys <C-v>jjg<C-a>
+| 0
+| 0
+| 0
+
+# ---- Insert mode ------------------------------------------------------------
+
+[i-a]
+keys iX<Esc>aY<Esc>
+| abc
+
+[I-A]
+keys IX<Esc>AY<Esc>
+|     abc
+
+[gI]
+keys gIX<Esc>
+|     abc
+
+[o-O]
+keys oX<Esc>OY<Esc>
+| abc
+
+[o-autoindent-off]
+keys oX<Esc>
+|     abc
+
+[count-insert]
+keys 3ix<Esc>
+| a
+
+[count-a]
+keys 2aab<Esc>
+| x
+
+[count-o]
+keys 2oz<Esc>
+| a
+
+[insert-ctrl-w]
+keys A<C-w>X<Esc>
+| one two
+
+[insert-ctrl-w-punctuation]
+keys A<C-w>X<Esc>
+| foo.bar
+
+[insert-ctrl-u]
+keys Anew<C-u>X<Esc>
+| keep
+
+[insert-backspace-join]
+keys ji<BS>X<Esc>
+| ab
+| cd
+
+[insert-ctrl-h]
+keys A<C-h><C-h>X<Esc>
+| abcd
+
+[insert-ctrl-t-d]
+keys A<C-t><C-t><C-d>!<Esc>
+| text
+
+[insert-ctrl-o]
+keys A!<C-o>0<C-o>x<Esc>
+| abc
+
+[insert-enter]
+keys liX<CR>Y<Esc>
+| abcd
+
+[insert-arrow-breaks-undo]
+keys iab<Left>X<Esc>u
+| z
+
+[R-replace]
+keys RXY<Esc>
+| abcd
+
+[R-backspace-restores]
+keys RXYZ<BS><BS><Esc>
+| abcd
+
+[R-past-end]
+keys lRXYZ<Esc>
+| ab
+
+[gi]
+keys AX<Esc>0giY<Esc>
+| abc
+
+[insert-ctrl-a]
+keys ifoo<Esc>o<C-a><Esc>
+| x
+
+[esc-moves-left]
+keys A<Esc>
+| abc
+
+[insert-ctrl-e-y]
+keys jA<C-y><C-y><Esc>
+| abcdef
+| x
+
+# ---- Ex commands ------------------------------------------------------------
+
+[s-first]
+keys :s/a/X/<CR>
+| a a a
+
+[s-global]
+keys :s/a/X/g<CR>
+| a a a
+
+[s-percent]
+keys :%s/a/X/<CR>
+| a a
+| b a
+| a
+
+[s-range]
+keys :2,3s/x/Y/<CR>
+| x
+| x
+| x
+| x
+
+[s-backref]
+keys :s/\(\w\+\) \(\w\+\)/\2 \1/<CR>
+| hello world
+
+[s-ampersand]
+keys :s/o/<&>/g<CR>
+| foo
+
+[s-upper]
+keys :s/\w\+/\u&/g<CR>
+| one two
+
+[s-upper-all]
+keys :s/b.*/\U&/<CR>
+| a bcd
+
+[s-count-flag]
+keys :s/x/Y/2<CR>
+| x
+| x
+| x
+
+[s-empty-pattern-reuses-search]
+keys /b<CR>:s//X/<CR>
+| abc
+
+[s-cursor-after]
+keys :%s/x/Y/<CR>
+| x
+| a x
+| b
+
+[s-not-found]
+keys :s/zzz/Y/<CR>
+| abc
+
+[s-newline-in-replacement]
+keys :s/,/\r/g<CR>
+| a,b,c
+
+[s-match-newline]
+keys :%s/\n//<CR>
+| a
+| b
+| c
+
+[ampersand-repeat]
+keys :s/a/X/<CR>j&
+| a a
+| a a
+
+[g-ampersand]
+keys :s/a/X/<CR>g&
+| a a
+| a a
+
+[ampersand-ampersand-ex]
+keys :s/a/X/g<CR>j:&&<CR>
+| a a
+| a a
+
+[g-delete]
+keys :g/x/d<CR>
+| a
+| x
+| b
+| x
+
+[v-delete]
+keys :v/x/d<CR>
+| a
+| x
+| b
+| x
+
+[g-bang]
+keys :g!/x/d<CR>
+| a
+| x
+| b
+
+[g-subst]
+keys :g/x/s/a/Y/<CR>
+| a x
+| a
+| a x
+
+[g-normal]
+keys :g/x/normal A;<CR>
+| x
+| a
+| x
+
+[g-move-reverse]
+keys :g/^/m0<CR>
+| 1
+| 2
+| 3
+
+[range-delete]
+keys :2,3d<CR>
+| a
+| b
+| c
+| d
+
+[relative-range]
+keys j:.,+1d<CR>
+| a
+| b
+| c
+| d
+
+[last-line-delete]
+keys :$d<CR>
+| a
+| b
+
+[delete-count]
+keys :d 2<CR>
+| a
+| b
+| c
+
+[move-top]
+keys G:m0<CR>
+| a
+| b
+| c
+
+[move-bottom]
+keys :m$<CR>
+| a
+| b
+| c
+
+[copy-line]
+keys :t.<CR>
+| a
+| b
+
+[copy-to-end]
+keys :co$<CR>
+| a
+| b
+
+[shift-range]
+keys :1,2><CR>
+| a
+| b
+| c
+
+[shift-left-range]
+keys :%<lt><CR>
+|     a
+|         b
+
+[join-range]
+keys :1,3j<CR>
+| a
+| b
+| c
+| d
+
+[join-bang]
+keys :j!<CR>
+| a
+|     b
+
+[sort]
+keys :sort<CR>
+| b
+| c
+| a
+
+[sort-reverse]
+keys :sort!<CR>
+| b
+| c
+| a
+
+[sort-numeric]
+keys :sort n<CR>
+| 10
+| 9
+| 100
+
+[sort-unique]
+keys :sort u<CR>
+| b
+| a
+| b
+
+[sort-ignore-case]
+keys :sort i<CR>
+| b
+| A
+| a
+| B
+
+[normal-range]
+keys :%norm A;<CR>
+| a
+| b
+
+[normal-count-keys]
+keys :norm 2x<CR>
+| abcd
+
+[yank-ex]
+keys :2y<CR>
+| a
+| b
+
+[put-ex]
+keys yy:2put<CR>
+| a
+| b
+| c
+
+[put-bang]
+keys yy:put!<CR>
+| a
+| b
+
+[delete-into-register]
+keys :d a<CR>"ap
+| a
+| b
+
+[undo-ex]
+keys x:undo<CR>
+| abc
+
+# ---- Macros -----------------------------------------------------------------
+
+[macro-record-play]
+keys qaA!<Esc>jq@a
+| a
+| b
+
+[macro-count]
+keys qaA!<Esc>jq2@a
+| a
+| b
+| c
+
+[macro-at-at]
+keys qaA!<Esc>jq@a@@
+| a
+| b
+| c
+| d
+
+[macro-append]
+keys qaA!<Esc>qqAA?<Esc>qj@a
+| a
+| b
+
+[macro-stops-on-failure]
+keys qafxx;q5@a
+| axbxcx
+| d
+
+[macro-with-search]
+keys qa/x<CR>rYq@a
+| x a x b x
+
+# ---- Numbers ----------------------------------------------------------------
+
+[ctrl-a]
+keys <C-a>
+| 7
+
+[ctrl-a-count]
+keys 5<C-a>
+| x 7 y
+
+[ctrl-x-negative]
+keys 3<C-x>
+| 1
+
+[ctrl-a-negative]
+keys <C-a>
+| -1
+
+[ctrl-a-hex]
+keys <C-a>
+| 0x0f
+
+[ctrl-a-finds-number]
+keys <C-a>
+| abc 9 x
+
+[ctrl-a-word-number]
+keys <C-a>
+| a7b
+
+[ctrl-a-leading-zero]
+keys <C-a>
+| 007
+
+[ctrl-a-dot]
+keys <C-a>..
+| 1
+
+[v-ctrl-a]
+keys Vj<C-a>
+| 1
+| 2
+
+# ---- Undo and redo ----------------------------------------------------------
+
+[undo-redo]
+keys dwdwuu<C-r>
+| a b c
+
+[undo-insert]
+keys ofoo<Esc>u
+| x
+
+[undo-count]
+keys xxx2u
+| abcd
+
+[redo-count]
+keys xxx3u2<C-r>
+| abcd
+
+[undo-cursor]
+keys jddjdduu
+| a
+| b
+| c
+| d
+
+[U-line-undo]
+keys xxxU
+| abcd
+
+[undo-substitute]
+keys :%s/a/b/<CR>u
+| a
+| a
+
+[undo-macro]
+keys qaxxq@au
+| abcdef
+
+[undo-visual-block-insert]
+keys <C-v>jIX<Esc>u
+| a
+| b
+
+# ---- Misc normal-mode -------------------------------------------------------
+
+[gp]
+keys yyjgpix<Esc>
+| a
+| b
+| c
+
+[gP]
+keys yyjgPix<Esc>
+| a
+| b
+
+[p-count-linewise]
+keys yy3p
+| a
+
+[P-characterwise-cursor]
+keys ywP
+| ab cd
+
+[ampersand-noop]
+keys &
+| abc
+
+[tilde-count]
+keys 4~
+| abc
+
+[cursor-after-dd]
+keys dd
+| a
+|     b
+
+[cursor-after-yy-p]
+keys yyp
+|    indented
+
+[cursor-after-x-last-char]
+keys $x
+| ab
+
+[cursor-after-u-dd]
+keys jddu
+| a
+|   b
+| c
+
+[J-count-cursor]
+keys J
+| abc
+| def

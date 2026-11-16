@@ -1,0 +1,115 @@
+# Cases of Tests/Oracle/cases.txt where VimKit ends differently from Vim 9.2.
+# One case name per line, grouped by cause. See OracleTests. Found by the
+# first oracle run (16.11.2026); each group is a fix to make, after which its
+# names come off this list (the test fails until they do).
+
+# The cursor ends past the last character in normal mode, or one column off
+# after a put.
+tilde
+tilde-count
+normal-range
+g-normal
+yw-P
+P-characterwise-cursor
+
+# Cursor after ex commands: Vim puts it on the last line changed (:s, :g, :v)
+# or the line after a deleted range, at the first non-blank.
+s-global
+s-cursor-after
+s-empty-pattern-reuses-search
+g-delete
+v-delete
+range-delete
+
+# Deleting the last line stores "\nline\n" in the register instead of "line\n".
+dd-last-line
+last-line-delete
+g-bang
+undo-cursor
+
+# dG from the middle leaves an empty last line.
+dG
+
+# Ex commands that are missing or ignore their range, count or register:
+# :m, :t, :co, :> and :< with a range, :j with a range, :j!, :d {count},
+# :d {register}, :s with a count.
+move-top
+move-bottom
+g-move-reverse
+copy-line
+copy-to-end
+shift-range
+shift-left-range
+join-range
+join-bang
+delete-count
+delete-into-register
+s-count-flag
+
+# :s replacement and pattern syntax: \( \) groups with \+, & and \u \U in the
+# replacement, \r for a line break, E486 when nothing matches; & g& :&& and
+# & without a previous substitute (E33).
+s-backref
+s-ampersand
+s-upper
+s-upper-all
+s-newline-in-replacement
+s-not-found
+ampersand-repeat
+g-ampersand
+ampersand-ampersand-ex
+ampersand-noop
+
+# Search: offsets (/e, /+1), \< \>, \v; motions go and g_.
+search-offset-end
+search-offset-line
+search-regex-word-boundary
+search-very-magic
+go-byte
+g_-last-nonblank
+
+# Text objects: i{ / a{ are linewise when the braces stand on their own
+# lines; counts (2i(); escaped quotes inside "..."; a" takes the trailing space.
+ci-paren-multiline
+di-brace-linewise
+d2i-paren
+di-quote-escaped
+da-quote-space
+
+# J adds no space before ")" or after trailing white space; r<CR> drops the
+# white space after the break.
+J-paren
+J-trailing-space
+r-newline
+
+# Visual: v$ includes the line break; cursor after <C-v>A; a block over short
+# lines; <C-a> and g<C-a> in visual mode.
+v-dollar-y
+ctrl-v-A
+ctrl-v-A-dollar
+ctrl-v-short-lines
+v-ctrl-a
+v-increment-column
+
+# Insert mode: <C-w> and <C-u> fill the unnamed register; <C-u> deletes the
+# whole line instead of the newly typed text; <C-h>, <C-a>, <C-y> are missing;
+# <Left> does not start a new undo step; <BS> in replace mode does not restore.
+insert-ctrl-w
+insert-ctrl-w-punctuation
+insert-ctrl-u
+insert-ctrl-h
+insert-ctrl-a
+insert-ctrl-e-y
+insert-arrow-breaks-undo
+R-backspace-restores
+
+# Macros: a failing motion does not stop the macro; u after @a undoes only
+# the last change; register text is read as key notation (<Esc> in @a).
+macro-stops-on-failure
+undo-macro
+let-register
+
+# Missing: U (undo line), gp, gP.
+U-line-undo
+gp
+gP
