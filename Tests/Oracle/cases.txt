@@ -198,6 +198,51 @@ keys /two/+1<CR>
 | two
 |   three
 
+[search-offset-start]
+keys /bar/s+1<CR>
+| foo bar baz
+
+[search-offset-begin-minus]
+keys /baz/b-2<CR>
+| foo bar baz
+
+[search-offset-line-up]
+keys /three/-1<CR>
+|   one
+|   two
+|   three
+
+[search-n-keeps-offset]
+keys /ab/e<CR>n
+| ab x ab y ab
+
+[search-backward-offset-end]
+keys $?ab?e<CR>
+| ab x ab y ab
+
+[search-N-offset-end]
+keys /ab/e<CR>nN
+| ab x ab y ab
+
+[search-new-clears-offset]
+keys /ab/e<CR>/x<CR>
+| ab x ab y ab
+
+[d-search-offset-end]
+keys d/x/e<CR>
+| abc x def
+
+[g_-count]
+keys 2g_
+| one
+| two  
+| three
+| four
+
+[d-g_]
+keys wdg_
+| one two three  
+
 [search-case-sensitive]
 keys /Foo<CR>
 | foo FOO Foo

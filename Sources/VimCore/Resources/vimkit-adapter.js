@@ -2053,7 +2053,8 @@
     options = options || {};
     var cm = this, closed = false;
     var input = findInput(template);
-    var dialog = { template: template, callback: callback, options: options, input: input, close: close };
+    var dialog = { template: template, callback: callback, options: options, input: input, close: close,
+                   prefix: (template.textContent || "").charAt(0) };
     if (input) {
       this.$closeNotification();
       input.value = options.value || "";
@@ -2139,7 +2140,9 @@
     if (options.onKeyDown && options.onKeyDown(ev, input.value, d.close)) return;
     if (this.dialog !== d) return;
     if (ev.key == "Enter") {
-      if (d.callback) d.callback(input.value);
+      var value = input.value;
+      if (d.prefix == "/" || d.prefix == "?") value = takeSearchOffset(value, d.prefix);
+      if (d.callback) d.callback(value);
       if (options.closeOnEnter !== false) d.close();
       return;
     }
@@ -3310,6 +3313,14 @@
       return result;
     };
 
+    // Search motions (/, ?, n, N) apply the offset of the last search.
+    var findNext = vimMotions.findNext;
+    vimMotions.findNext = function (cm, head, motionArgs) {
+      var result = findNext.apply(this, arguments);
+      if (result && searchOffset && searchOffset.kind == "end") result = endOffsetMatch(cm, result, motionArgs);
+      return applySearchOffset(cm, result, motionArgs);
+    };
+
     // r<CR> ends like typing <CR><Esc>: the cursor before the new indent.
     var replace = vimActions.replace;
     vimActions.replace = function (cm, args, vim) {
@@ -3391,6 +3402,92 @@
     this.replaceRange("", new Pos(auto.line, 0), new Pos(auto.line, auto.text.length));
     this.setCursor(auto.line, 0);
   };
+
+  // ---- search offsets (/pat/e, /pat/+1, ?pat?s-1), g_, go -----------------------
+
+  // The offset of the last search, as Vim remembers it for n and N.
+  var searchOffset = null; // { kind: "line" | "end" | "start", n }
+  function takeSearchOffset(value, delimiter) {
+    if (!value) return value; // "/" alone: last pattern, last offset
+    for (var i = 0; i < value.length; i++) {
+      if (value.charAt(i) == "\\") { i++; continue; }
+      if (value.charAt(i) != delimiter) continue;
+      var m = /^(?:([esb])([+-]\d*)?|([+-]?\d*))$/.exec(value.slice(i + 1));
+      if (!m) break;
+      var number = function (t) { return !t ? 0 : t == "+" ? 1 : t == "-" ? -1 : +t; };
+      if (m[1]) searchOffset = { kind: m[1] == "e" ? "end" : "start", n: number(m[2]) };
+      else searchOffset = m[3] ? { kind: "line", n: number(m[3]) } : null;
+      return value.slice(0, i);
+    }
+    searchOffset = null;
+    return value;
+  }
+  // With an e offset Vim searches by the end of the match: forward, the
+  // first match that ends after the cursor (it may start before it);
+  // backward, the last one that ends before it.
+  function endOffsetMatch(cm, found, motionArgs) {
+    var state = cm.state.vim && cm.state.vim.searchState_, query = state && state.getQuery();
+    if (!query || (motionArgs.repeat || 1) > 1) return found;
+    var cur = cm.indexFromPos(cm.getCursor()), forward = !!motionArgs.forward != !!state.isReversed();
+    var endOf = function (pos) {
+      var c = cm.getSearchCursor(query, pos);
+      return c.findNext() ? cm.indexFromPos(c.to()) - 1 : -1;
+    };
+    if (forward) {
+      var c = cm.getSearchCursor(query, new Pos(cm.getCursor().line, 0));
+      while (c.findNext()) {
+        var from = cm.indexFromPos(c.from()), end = cm.indexFromPos(c.to()) - 1;
+        if (from > cur) break;
+        if (end > cur) return c.from();
+      }
+      return found;
+    }
+    if (endOf(found) < cur) return found;
+    var back = cm.getSearchCursor(query, found);
+    return back.findPrevious() ? back.from() : found;
+  }
+  function applySearchOffset(cm, pos, motionArgs) {
+    var off = searchOffset;
+    if (!off || !pos) return pos;
+    if (off.kind == "line") {
+      var line = Math.max(cm.firstLine(), Math.min(cm.lastLine(), pos.line + off.n));
+      motionArgs.linewise = true;
+      return new Pos(line, 0);
+    }
+    var at = cm.indexFromPos(pos);
+    if (off.kind == "end") {
+      var state = cm.state.vim && cm.state.vim.searchState_, query = state && state.getQuery();
+      if (query) {
+        var cursor = cm.getSearchCursor(query, pos);
+        if (cursor.findNext()) at = cm.indexFromPos(cursor.to()) - 1;
+      }
+      motionArgs.inclusive = true;
+    }
+    at = Math.max(0, Math.min(cm.doc.getLength(), at + off.n));
+    return cm.posFromIndex(at);
+  }
+
+  // g_: the last non-blank character, [count]-1 lines down.
+  Vim.defineMotion("vimkitLastNonBlank", function (cm, head, motionArgs) {
+    var line = Math.min(head.line + (motionArgs.repeat || 1) - 1, cm.lastLine());
+    var text = cm.getLine(line), ch = text.search(/\s*$/) - 1;
+    return new Pos(line, Math.max(ch, 0));
+  });
+  Vim.mapCommand("g_", "motion", "vimkitLastNonBlank", { inclusive: true }, {});
+  // [count]go: byte [count] of the text (UTF-8, as Vim counts).
+  Vim.defineMotion("vimkitGoByte", function (cm, head, motionArgs) {
+    var target = (motionArgs.repeat || 1) - 1, text = cm.getValue(), bytes = 0, i = 0;
+    while (i < text.length) {
+      var code = text.codePointAt(i), size = code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+      if (bytes + size > target) break;
+      bytes += size;
+      i += code > 0xffff ? 2 : 1;
+    }
+    var pos = cm.posFromIndex(Math.min(i, text.length));
+    var len = cm.getLine(pos.line).length;
+    return new Pos(pos.line, Math.min(pos.ch, Math.max(len - 1, 0)));
+  });
+  Vim.mapCommand("go", "motion", "vimkitGoByte", { toJumplist: true }, {});
 
   // ---- :&, &, g& --------------------------------------------------------------
 

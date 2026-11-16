@@ -3,12 +3,6 @@
 # first oracle run (16.11.2026); each group is a fix to make, after which its
 # names come off this list (the test fails until they do).
 
-# Search offsets (/e, /+1); motions go and g_.
-search-offset-end
-search-offset-line
-go-byte
-g_-last-nonblank
-
 # Text objects: i{ / a{ are linewise when the braces stand on their own
 # lines; counts (2i(); escaped quotes inside "..."; a" takes the trailing space.
 ci-paren-multiline
