@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-11-16
 
 - Macros as in Vim: `u` after `@a` (or `3@a`) undoes the whole macro; a
   character motion that cannot move (`h` in column 0, `l` on the last
@@ -25,7 +25,7 @@
   linewise for operators; `e` is inclusive), remembered for `n` and `N`; with
   an `e` offset the search goes by the end of the match. New motions `g_`
   and `[count]go`.
-- Search and `:s` patterns are Vim regular expressions by default
+- **Breaking:** search and `:s` patterns are Vim regular expressions by default
   (`'pcre'` is off): `\(\)`, `\+`, `\|`, `\<` `\>`, `\v`, `\zs`; `:set pcre`
   brings back JavaScript syntax. The `:s` replacement follows Vim: `&` is
   the match (`\&` a literal one), `\r` breaks the line, `\u` `\l` `\U`

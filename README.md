@@ -33,7 +33,7 @@ struct ContentView: View {
 Add the package in Xcode (*File → Add Package Dependencies…*) or in `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/Christian-SC26/VimKit.git", from: "0.2.1")
+.package(url: "https://github.com/Christian-SC26/VimKit.git", from: "0.3.0")
 ```
 
 ## Usage
