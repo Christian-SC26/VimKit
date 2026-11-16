@@ -702,6 +702,62 @@ keys fadi'
 keys fadi`
 | x `abc` y
 
+[di-quote-between-strings]
+keys di"
+at 1 5
+| "a" x "b"
+
+[di-quote-on-closing]
+keys di"
+at 1 3
+| "a" x "b"
+
+[da-quote-leading-space]
+keys da"
+at 1 4
+| x "hi"
+
+[ci-quote-empty]
+keys ci"Z<Esc>
+at 1 4
+| x "" y
+
+[2i-quote]
+keys d2i"
+at 1 4
+| x "ab" y
+
+[vi-quote]
+keys vi"d
+at 1 4
+| x "ab" y
+
+[va-quote]
+keys va"d
+at 1 4
+| x "ab" y
+
+[di-brace-same-line-end]
+keys jdi{
+| f {
+|     a }
+
+[yi-brace-linewise-register]
+keys jyi{P
+| x {
+|     a
+| }
+
+[d2a-paren]
+keys fbd2a(
+| f(a(b) c) d
+
+[vi-brace]
+keys jvi{d
+| x {
+|     a
+| }
+
 [dit]
 keys fxdit
 | <a><b>x</b></a>

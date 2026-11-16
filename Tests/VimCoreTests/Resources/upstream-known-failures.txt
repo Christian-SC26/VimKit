@@ -36,3 +36,13 @@ vim_S_normal
 # & in a :s replacement is the whole match, as in Vim (checked by the Vim
 # oracle); this test expects a literal "$&".
 vim_ex_substitute_javascript
+
+# i{ / i[ / i< over brackets on their own lines is linewise and keeps those
+# lines, as in Vim (checked by the Vim oracle); codemirror-vim joins them.
+vim_di{_middle_spc
+vim_di}_middle_spc
+vim_di[_middle_spc
+vim_di]_middle_spc
+vim_di<_middle_spc
+vim_di>_middle_spc
+vim_vi{_middle_spc

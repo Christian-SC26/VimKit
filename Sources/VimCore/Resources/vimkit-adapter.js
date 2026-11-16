@@ -3313,6 +3313,86 @@
       return result;
     };
 
+    // A characterwise visual selection whose last character is the line
+    // break (v$, vi{) reaches one past the line; operators take the line
+    // break with it, as in Vim.
+    Object.keys(vimOperators).forEach(function (name) {
+      var operator = vimOperators[name];
+      if (typeof operator != "function") return;
+      vimOperators[name] = function (cm, args, ranges) {
+        var vim = cm.state.vim;
+        if (vim && vim.visualMode && !vim.visualLine && !vim.visualBlock && ranges) {
+          var past = function (p) {
+            return p.line < cm.lastLine() && p.ch == cm.getLine(p.line).length + 1 ? new Pos(p.line + 1, 0) : p;
+          };
+          var wide = ranges.map(function (r) { return { anchor: past(r.anchor), head: past(r.head) }; });
+          if (wide.some(function (r, i) { return r.head != ranges[i].head || r.anchor != ranges[i].anchor; })) {
+            arguments[2] = wide;
+            cm.setSelections(wide, 0);
+          }
+        }
+        return operator.apply(this, arguments);
+      };
+    });
+
+    // Text objects: quotes, bracket counts and linewise blocks as in Vim.
+    var textObject = vimMotions.textObjectManipulation;
+    var brackets = { "(": 1, ")": 1, b: 1, "{": 1, "}": 1, B: 1, "[": 1, "]": 1, "<": 1, ">": 1 };
+    vimMotions.textObjectManipulation = function (cm, head, motionArgs, vim) {
+      var ch = motionArgs.selectedCharacter, inner = !!motionArgs.textObjectInner;
+      if (ch == '"' || ch == "'" || ch == "`") {
+        var q = quoteObject(cm, head, ch, inner, motionArgs.repeat || 1);
+        if (!q) return null;
+        if (!vim.visualMode) return [q.start, q.end];
+        var a = cm.getCursor("anchor"), h = cm.getCursor("head");
+        if (a.line == h.line && Math.abs(a.ch - h.ch) <= 1) return [q.start, new Pos(q.end.line, Math.max(q.end.ch - 1, q.start.ch))];
+        return textObject.apply(this, arguments);
+      }
+      // A fresh visual selection (vi{) takes the same range as an operator.
+      var fresh = false;
+      if (brackets[ch] && inner && vim.visualMode && !vim.visualLine && !vim.visualBlock) {
+        var sa = cm.getCursor("anchor"), sh = cm.getCursor("head");
+        fresh = sa.line == sh.line && Math.abs(sa.ch - sh.ch) <= 1;
+      }
+      if (fresh) {
+        vim.visualMode = false;
+        try { var range = vimMotions.textObjectManipulation.call(this, cm, head, motionArgs, vim); }
+        finally { vim.visualMode = true; }
+        var whole = motionArgs.linewise;
+        motionArgs.linewise = false;
+        if (!range) return null;
+        // Whole lines end on the last line break; otherwise the selection
+        // ends on the last character of the range.
+        var last = range[1];
+        if (!whole && cm.indexFromPos(last) > cm.indexFromPos(range[0]))
+          last = cm.posFromIndex(cm.indexFromPos(last) - 1);
+        return [range[0], last];
+      }
+      var result = textObject.apply(this, arguments);
+      if (!brackets[ch] || !result || vim.visualMode) return result;
+      // [count]i( / [count]a(: the count-th enclosing pair.
+      for (var k = 1; k < (motionArgs.repeat || 1); k++) {
+        var open = cm.indexFromPos(result[0]) - (inner ? 2 : 1);
+        if (open < 0) break;
+        var outer = textObject.call(this, cm, cm.posFromIndex(open), motionArgs, vim);
+        if (!outer || cm.indexFromPos(outer[0]) >= cm.indexFromPos(result[0])) break;
+        result = outer;
+      }
+      if (!inner) return result;
+      // i{ leaves out the line break after the opening bracket and the indent
+      // before the closing one; spanning whole lines, it is linewise.
+      var start = result[0], end = result[1];
+      if (start.ch == cm.getLine(start.line).length && start.line < end.line) start = new Pos(start.line + 1, 0);
+      if (end.line > start.line && /^[ \t]*$/.test(cm.getLine(end.line).slice(0, end.ch))) end = new Pos(end.line, 0);
+      if (start.ch == 0 && end.ch == 0 && end.line > start.line) {
+        motionArgs.linewise = true;
+        var operatorArgs = vim.inputState.operatorArgs;
+        if (operatorArgs) operatorArgs.linewise = true;
+        return [start, new Pos(end.line - 1, cm.getLine(end.line - 1).length)];
+      }
+      return [start, end];
+    };
+
     // Search motions (/, ?, n, N) apply the offset of the last search.
     var findNext = vimMotions.findNext;
     vimMotions.findNext = function (cm, head, motionArgs) {
@@ -3402,6 +3482,50 @@
     this.replaceRange("", new Pos(auto.line, 0), new Pos(auto.line, auto.text.length));
     this.setCursor(auto.line, 0);
   };
+
+  // ---- quote text objects -------------------------------------------------------
+
+  // i" / a" as in Vim: \ escapes a quote; on a quote, quotes pair up from the
+  // start of the line; elsewhere the nearest quotes around the cursor count,
+  // or the first pair after it. a" takes the white space after the string
+  // (or, if none, before it); 2i" takes the quotes without white space.
+  function quoteObject(cm, head, q, inner, count) {
+    var text = cm.getLine(head.line), c = head.ch;
+    var isQuote = function (i) {
+      if (text.charAt(i) != q) return false;
+      var n = 0;
+      for (var j = i - 1; j >= 0 && text.charAt(j) == "\\"; j--) n++;
+      return n % 2 == 0;
+    };
+    var next = function (i) { for (; i < text.length; i++) if (isQuote(i)) return i; return -1; };
+    var prev = function (i) { for (; i >= 0; i--) if (isQuote(i)) return i; return -1; };
+    var open, close;
+    if (isQuote(c)) {
+      var before = 0;
+      for (var i = 0; i < c; i++) if (isQuote(i)) before++;
+      if (before % 2 == 0) { open = c; close = next(c + 1); }
+      else { close = c; open = prev(c - 1); }
+    } else {
+      open = prev(c - 1);
+      close = open < 0 ? -1 : next(c + 1);
+      if (open < 0 || close < 0) {
+        open = next(c + 1);
+        close = open < 0 ? -1 : next(open + 1);
+      }
+    }
+    if (open < 0 || close < 0) return null;
+    var start = open + 1, end = close;
+    if (inner && count >= 2) { start = open; end = close + 1; }
+    else if (!inner) {
+      start = open;
+      end = close + 1;
+      var t = end;
+      while (t < text.length && /[ \t]/.test(text.charAt(t))) t++;
+      if (t > end) end = t;
+      else while (start > 0 && /[ \t]/.test(text.charAt(start - 1))) start--;
+    }
+    return { start: new Pos(head.line, start), end: new Pos(head.line, end) };
+  }
 
   // ---- search offsets (/pat/e, /pat/+1, ?pat?s-1), g_, go -----------------------
 

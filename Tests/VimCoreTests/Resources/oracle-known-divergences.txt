@@ -3,17 +3,8 @@
 # first oracle run (16.11.2026); each group is a fix to make, after which its
 # names come off this list (the test fails until they do).
 
-# Text objects: i{ / a{ are linewise when the braces stand on their own
-# lines; counts (2i(); escaped quotes inside "..."; a" takes the trailing space.
-ci-paren-multiline
-di-brace-linewise
-d2i-paren
-di-quote-escaped
-da-quote-space
-
-# Visual: v$ includes the line break; cursor after <C-v>A; a block over short
+# Visual: cursor after <C-v>A; a block over short
 # lines; <C-a> and g<C-a> in visual mode.
-v-dollar-y
 ctrl-v-A
 ctrl-v-A-dollar
 ctrl-v-short-lines
