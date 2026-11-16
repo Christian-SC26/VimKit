@@ -9,7 +9,3 @@ macro-stops-on-failure
 undo-macro
 let-register
 
-# Missing: U (undo line), gp, gP.
-U-line-undo
-gp
-gP

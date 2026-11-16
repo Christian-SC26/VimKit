@@ -691,6 +691,7 @@
     if (from === to && !text) return;
     var removed = this.doc.slice(from, to);
     var selBefore = this.sel.ranges.map(function (r) { return { anchor: r.anchor, head: r.head }; });
+    if (!this.history.suppressed) this.$noteLineChange(from, removed, text);
     if (this.$folds.length) this.$foldsBeforeChange(from, to);
     this.doc.replace(from, to, text);
     var n = text.length;
@@ -742,6 +743,7 @@
   // are not ascending and apart, or fewer than 64, go through $applyChange
   // one by one.
   proto.$applyChanges = function (changes, fromHost, origin) {
+    if (!this.history.suppressed && changes.length > 3) this.$uLine = null;
     var len = this.doc.getLength(), froms = [], tos = [], texts = [], last = 0, k;
     for (k = 0; k < changes.length; k += 3) {
       var from = changes[k], to = changes[k + 1], text = changes[k + 2];
@@ -930,6 +932,29 @@
   };
 
   // ---- undo ------------------------------------------------------------------
+
+  // U undoes the changes made to the last changed line. A change within one
+  // line remembers that line as it was before its first change (and the
+  // cursor column then); a change across lines forgets it. Undo (u) does not
+  // touch it.
+  proto.$noteLineChange = function (from, removed, text) {
+    if (this.$undoingLine) return;
+    if (removed.indexOf("\n") >= 0 || text.indexOf("\n") >= 0) { this.$uLine = null; return; }
+    var line = this.doc.posFromIndex(from).line;
+    if (this.$uLine && this.$uLine.line == line) return;
+    var cursor = this.getCursor("start");
+    this.$uLine = { line: line, text: this.getLine(line), col: cursor.line == line ? cursor.ch : 0 };
+  };
+  proto.$undoLine = function () {
+    var u = this.$uLine;
+    if (!u || u.line > this.lastLine()) return;
+    var cursor = this.getCursor(), current = this.getLine(u.line), col = u.col;
+    this.$undoingLine = true;
+    try { this.replaceRange(u.text, new Pos(u.line, 0), new Pos(u.line, current.length)); }
+    finally { this.$undoingLine = false; }
+    this.$uLine = { line: u.line, text: current, col: cursor.line == u.line ? cursor.ch : col };
+    this.setCursor(new Pos(u.line, Math.max(0, Math.min(col, this.getLine(u.line).length - 1))));
+  };
 
   proto.$runHistory = function (from, to, invert) {
     var history = this.history;
@@ -3497,6 +3522,32 @@
     this.replaceRange("", new Pos(auto.line, 0), new Pos(auto.line, auto.text.length));
     this.setCursor(auto.line, 0);
   };
+
+  // ---- U, gp, gP ---------------------------------------------------------------
+
+  Vim.defineAction("vimkitUndoLine", function (cm) { cm.$undoLine(); });
+  Vim._mapCommand({ keys: "U", type: "action", action: "vimkitUndoLine", context: "normal" });
+
+  // gp / gP put like p / P and leave the cursor just after the new text.
+  Vim.defineAction("vimkitPutAfterText", function (cm, actionArgs, vim) {
+    var register = Vim.getRegisterController().getRegister(actionArgs.registerName);
+    var cur = cm.getCursor(), lines = cm.lineCount(), length = cm.getValue().length;
+    var start = cm.indexFromPos(cur) + (actionArgs.after && cm.getLine(cur.line).length ? 1 : 0);
+    vimActions.paste.call(vimActions, cm, actionArgs, vim);
+    var added = cm.lineCount() - lines;
+    if (register.blockwise) {
+      var rows = register.toString().split("\n"), width = 0;
+      rows.forEach(function (r) { width = Math.max(width, r.length); });
+      cm.setCursor(new Pos(cur.line + rows.length - 1, cur.ch + (actionArgs.after ? 1 : 0) + width));
+    } else if (register.linewise) {
+      var line = cur.line + (actionArgs.after ? 1 : 0) + added;
+      cm.setCursor(line > cm.lastLine() ? new Pos(cm.lastLine(), 0) : new Pos(line, 0));
+    } else {
+      cm.setCursor(cm.posFromIndex(start + cm.getValue().length - length));
+    }
+  });
+  Vim._mapCommand({ keys: "gp", type: "action", action: "vimkitPutAfterText", isEdit: true, actionArgs: { after: true, isEdit: true }, context: "normal" });
+  Vim._mapCommand({ keys: "gP", type: "action", action: "vimkitPutAfterText", isEdit: true, actionArgs: { after: false, isEdit: true }, context: "normal" });
 
   // ---- visual block over short lines; <C-a> / <C-x> in visual mode -------------
 

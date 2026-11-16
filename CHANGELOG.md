@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- New `U` (undo all changes on the last changed line; `U` again redoes
+  them, `u` undoes `U`), `gp` and `gP` (put and leave the cursor just after
+  the new text).
 - Visual mode as in Vim: `<C-a>` / `<C-x>` add `[count]` to the first number
   of each selected line (within the block or from the start column), and
   `g<C-a>` / `g<C-x>` add `[count]`, `2*[count]`, …; after `<C-v>I` and
@@ -51,10 +54,10 @@
   and no longer stops `:g` on a line without a match; "N lines yanked" only
   above 2 lines and no "Found N matches" after `:s` (unless the `n` flag);
   these messages are no longer reported as errors.
-- Vim oracle: `OracleTests` replays 332 cases from `Tests/Oracle/cases.txt`
+- Vim oracle: `OracleTests` replays 343 cases from `Tests/Oracle/cases.txt`
   and compares them with what real Vim 9.2 does, as recorded in
   `oracle-expected.json` by `Tests/Oracle/regenerate.sh`, which also lists
-  where Neovim differs (`Tests/Oracle/NEOVIM.md`). 326 match; the 6
+  where Neovim differs (`Tests/Oracle/NEOVIM.md`). 340 match; the 3
   differences are listed by cause in `oracle-known-divergences.txt`.
 - Registers as in Vim: `"*`/`"+` on the clipboard (`'clipboard'`
   unnamed/unnamedplus), `"%`/`"#` from `VimEngine.fileName` /

@@ -1591,6 +1591,59 @@ keys <C-v>jIX<Esc>u
 
 # ---- Misc normal-mode -------------------------------------------------------
 
+[U-cursor-column]
+keys $xxU
+| abcd
+
+[U-other-line]
+keys xjxkU
+| abcd
+| ef
+
+[U-twice]
+keys xxUU
+| abcd
+
+[U-after-insert]
+keys xiZ<Esc>U
+| abcd
+
+[U-after-dd]
+keys xddU
+| abcd
+| ef
+
+[gp-count]
+keys yyj2gp
+| a
+| b
+
+[gp-last-line]
+keys yyjgp
+| a
+| b
+
+[gp-char]
+keys ylgp
+| abc
+| d
+
+[gP-char-end]
+keys yl$gP
+| abc
+| d
+
+[gp-char-multiline]
+keys vjyGgp
+| ab
+| cd
+| ef
+
+[gp-block]
+keys <C-v>jy$gp
+| ab
+| cd
+
 [gp]
 keys yyjgpix<Esc>
 | a
