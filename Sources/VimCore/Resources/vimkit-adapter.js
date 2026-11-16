@@ -2740,6 +2740,9 @@
       return;
     }
     var tokens = tokenizeKeys(text), playing = mms.isPlaying;
+    // The whole macro is one change for u, as in Vim.
+    var history = cm.history, outer = !cm.$macroDepth, mark = 0;
+    if (outer) { history.close(); mark = history.done.length; }
     cm.$macroDepth = (cm.$macroDepth || 0) + 1;
     // The keys run as if typed (search prompts, insert-mode changes and `.`
     // work as in Vim); while recording, they must not be recorded again.
@@ -2753,6 +2756,16 @@
     } finally {
       mms.isPlaying = playing;
       cm.$macroDepth--;
+      if (outer && !vim.insertMode) {
+        history.close();
+        mark = Math.min(mark, history.done.length);
+        var groups = history.done.splice(mark);
+        if (groups.length) {
+          var merged = { changes: [], selBefore: groups[0].selBefore };
+          groups.forEach(function (g) { merged.changes = merged.changes.concat(g.changes); });
+          history.done.push(merged);
+        }
+      }
     }
   });
 
@@ -2767,6 +2780,7 @@
     }
     var e = eventFromNotation(token), raw = this.$macroKeys;
     this.$macroKeys = true;
+    this.$macroFailed = false;
     try { if (!this.handleKeyEvent(e)) this.$defaultInput(e); }
     finally { this.$macroKeys = raw; }
     // The macro runs inside one vim operation; deliver this key's changes
@@ -2780,7 +2794,7 @@
     }
     if (this.notification && this.notification !== note && this.notification.isError) return false;
     if (line >= 0 && this.getCursor().line == line && !vim.inputState.operator) return false;
-    return true;
+    return !this.$macroFailed;
   };
 
   // Visual-mode P: like p, but the register keeps its text.
@@ -2906,7 +2920,6 @@
     var reg = name == '"' ? rc.unnamedRegister : rc.getRegister(name.toLowerCase());
     var linewise = /\n$/.test(text);
     reg.setText(text, linewise);
-    if (reg !== rc.unnamedRegister && name != '"') rc.unnamedRegister.setText(text, linewise);
   });
 
   Vim.defineEx("echo", "ec", function (cm, params) {
@@ -3432,6 +3445,28 @@
       }
       return [start, end];
     };
+
+    // In a macro, a character motion that cannot move (h in column 0, l on
+    // the last character, f or ; that finds nothing) stops it, as in Vim.
+    var byCharacters = vimMotions.moveByCharacters;
+    vimMotions.moveByCharacters = function (cm, head, motionArgs) {
+      if (cm.$macroDepth) {
+        var len = cm.getLine(head.line).length, vim = cm.state.vim;
+        var operator = vim && vim.inputState.operator;
+        if (motionArgs.forward ? !operator && head.ch >= len - 1 : head.ch == 0) cm.$macroFailed = true;
+      }
+      return byCharacters.apply(this, arguments);
+    };
+    ["moveToCharacter", "repeatLastCharacterSearch"].forEach(function (name) {
+      var motion = vimMotions[name];
+      vimMotions[name] = function (cm, head, motionArgs) {
+        var result = motion.apply(this, arguments);
+        var last = G().lastCharacterSearch;
+        var till = name == "repeatLastCharacterSearch" && last && last.increment;
+        if (cm.$macroDepth && !till && result && result.line == head.line && result.ch == head.ch) cm.$macroFailed = true;
+        return result;
+      };
+    });
 
     // Search motions (/, ?, n, N) apply the offset of the last search.
     var findNext = vimMotions.findNext;

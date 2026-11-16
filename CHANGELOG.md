@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Macros as in Vim: `u` after `@a` (or `3@a`) undoes the whole macro; a
+  character motion that cannot move (`h` in column 0, `l` on the last
+  character, `f` or `;` that finds nothing) stops it. `:let @a = …` no longer
+  writes the unnamed register.
 - New `U` (undo all changes on the last changed line; `U` again redoes
   them, `u` undoes `U`), `gp` and `gP` (put and leave the cursor just after
   the new text).
@@ -54,11 +58,12 @@
   and no longer stops `:g` on a line without a match; "N lines yanked" only
   above 2 lines and no "Found N matches" after `:s` (unless the `n` flag);
   these messages are no longer reported as errors.
-- Vim oracle: `OracleTests` replays 343 cases from `Tests/Oracle/cases.txt`
+- Vim oracle: `OracleTests` replays 348 cases from `Tests/Oracle/cases.txt`
   and compares them with what real Vim 9.2 does, as recorded in
   `oracle-expected.json` by `Tests/Oracle/regenerate.sh`, which also lists
-  where Neovim differs (`Tests/Oracle/NEOVIM.md`). 340 match; the 3
-  differences are listed by cause in `oracle-known-divergences.txt`.
+  where Neovim differs (`Tests/Oracle/NEOVIM.md`). 347 match; the one
+  difference (macros are key notation in registers) is by design and listed
+  in `oracle-known-divergences.txt`.
 - Registers as in Vim: `"*`/`"+` on the clipboard (`'clipboard'`
   unnamed/unnamedplus), `"%`/`"#` from `VimEngine.fileName` /
   `alternateFileName`, the expression register `"=` (numbers, strings,

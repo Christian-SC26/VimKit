@@ -618,6 +618,27 @@ keys :s/a/b/<CR>j@:
 keys yiwA <C-r>"<Esc>
 | word
 
+[let-register-keeps-unnamed]
+keys yl:let @a='xyz'<CR>p
+| abc
+
+[macro-stops-on-l]
+keys qaxlq9@a
+| abcdef
+
+[macro-stops-on-h]
+keys $qaxhq9@a
+| abcdef
+
+[undo-macro-count]
+keys qaxq3@au
+| abcdef
+
+[undo-macro-with-insert]
+keys qaA!<Esc>jq@au
+| a
+| b
+
 [let-register]
 keys :let @a='iX<lt>Esc>'<CR>@a
 | abc

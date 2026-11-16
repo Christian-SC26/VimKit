@@ -207,15 +207,15 @@ message to that file.
 ### Vim oracle
 
 `OracleTests` compares VimKit with real Vim 9.2. `Tests/Oracle/cases.txt`
-lists 343 cases (starting text, cursor and keys) covering motions,
+lists 348 cases (starting text, cursor and keys) covering motions,
 operators, text objects, visual and insert mode, ex commands, registers,
 macros, numbers and undo. `Tests/Oracle/regenerate.sh` plays each case in a
 fresh Vim and records the text, cursor, mode and unnamed register in
 `Tests/VimCoreTests/Resources/oracle-expected.json`. The test replays the
 keys in VimKit and compares. Vim is needed only to regenerate the file, not
-to run the test. Currently 340 cases match Vim. The other 3 are listed by
-cause in `Tests/VimCoreTests/Resources/oracle-known-divergences.txt`; that
-list is the to-do list for matching Vim. The test fails on any other
+to run the test. Currently 347 cases match Vim. The one other, listed in
+`Tests/VimCoreTests/Resources/oracle-known-divergences.txt`, is by design:
+registers hold macros as key notation (`A;<Esc>j`), not raw bytes. The test fails on any other
 difference, when a listed case starts to match, and when `cases.txt` changed
 without a regenerate. Set `VIMKIT_ORACLE_REPORT=/path/file.txt` to write
 every difference to that file. With `nvim` on `PATH` the script also writes

@@ -3,9 +3,7 @@
 # first oracle run (16.11.2026); each group is a fix to make, after which its
 # names come off this list (the test fails until they do).
 
-# Macros: a failing motion does not stop the macro; u after @a undoes only
-# the last change; register text is read as key notation (<Esc> in @a).
-macro-stops-on-failure
-undo-macro
+# By design: a register holds macros as key notation ("A;<Esc>j", see
+# RegisterTests.macrosAreKeyText), so @a reads <Esc> in its text as the key.
+# Vim keeps raw bytes (^[) and reads "<Esc>" as five characters.
 let-register
-

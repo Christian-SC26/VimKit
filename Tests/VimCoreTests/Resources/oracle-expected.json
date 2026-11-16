@@ -1,6 +1,6 @@
 {
 "generator": "Vim 9.2.1351",
-"casesSHA256": "8b3d984bb008d7ec6be788a5c2ae2f282a5a558f2af8ba6a383840a62cd4dec0",
+"casesSHA256": "6c8000eea8fea69e93ab53b72db03be043badeb8624670d9a494fd6da6732cf3",
 "cases": [
 {"name":"w-punctuation","expected":{"registerType":"","column":9,"register":"","line":1,"mode":"n","text":["foo.bar(baz) qux"],"error":""},"at":[1,1],"keys":"wwww","text":["foo.bar(baz) qux"]},
 {"name":"W-bigword","expected":{"registerType":"","column":20,"register":"","line":1,"mode":"n","text":["foo.bar(baz) qux-x end"],"error":""},"at":[1,1],"keys":"WW","text":["foo.bar(baz) qux-x end"]},
@@ -127,6 +127,11 @@
 {"name":"dot-register","expected":{"registerType":"","column":10,"register":"","line":1,"mode":"n","text":["hellohellox"],"error":""},"at":[1,1],"keys":"ihello<Esc>\".p","text":["x"]},
 {"name":"colon-register","expected":{"registerType":"","column":1,"register":"","line":2,"mode":"n","text":["b","b"],"error":""},"at":[1,1],"keys":":s/a/b/<CR>j@:","text":["a","a"]},
 {"name":"insert-ctrl-r","expected":{"registerType":"v","column":9,"register":"word","line":1,"mode":"n","text":["word word"],"error":""},"at":[1,1],"keys":"yiwA <C-r>\"<Esc>","text":["word"]},
+{"name":"let-register-keeps-unnamed","expected":{"registerType":"v","column":2,"register":"a","line":1,"mode":"n","text":["aabc"],"error":""},"at":[1,1],"keys":"yl:let @a='xyz'<CR>p","text":["abc"]},
+{"name":"macro-stops-on-l","expected":{"registerType":"v","column":3,"register":"e","line":1,"mode":"n","text":["bdf"],"error":""},"at":[1,1],"keys":"qaxlq9@a","text":["abcdef"]},
+{"name":"macro-stops-on-h","expected":{"registerType":"v","column":1,"register":"a","line":1,"mode":"n","text":["e"],"error":""},"at":[1,1],"keys":"$qaxhq9@a","text":["abcdef"]},
+{"name":"undo-macro-count","expected":{"registerType":"v","column":1,"register":"d","line":1,"mode":"n","text":["bcdef"],"error":""},"at":[1,1],"keys":"qaxq3@au","text":["abcdef"]},
+{"name":"undo-macro-with-insert","expected":{"registerType":"","column":1,"register":"","line":2,"mode":"n","text":["a!","b"],"error":""},"at":[1,1],"keys":"qaA!<Esc>jq@au","text":["a","b"]},
 {"name":"let-register","expected":{"registerType":"","column":6,"register":"","line":1,"mode":"n","text":["X<Esc>abc"],"error":""},"at":[1,1],"keys":":let @a='iX<lt>Esc>'<CR>@a","text":["abc"]},
 {"name":"diw","expected":{"registerType":"v","column":5,"register":"two","line":1,"mode":"n","text":["one  three"],"error":""},"at":[1,1],"keys":"wdiw","text":["one two three"]},
 {"name":"daw","expected":{"registerType":"v","column":5,"register":"two ","line":1,"mode":"n","text":["one three"],"error":""},"at":[1,1],"keys":"wdaw","text":["one two three"]},
