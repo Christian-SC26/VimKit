@@ -34,7 +34,7 @@ final class EditorWindow {
     /// Visible text rows (top and bottom line numbers are approximate to a row).
     var visibleRect: NSRect { scrollView.contentView.bounds }
 
-    /// Types keys in Vim notation (`dd`, `<Esc>`, `<C-d>`, `<CR>`, `<lt>`) through `keyDown`.
+    /// Types keys in Vim notation (`dd`, `<Esc>`, `<C-d>`, `<CR>`, `<Left>`, `<lt>`) through `keyDown`.
     func type(_ keys: String) {
         for event in Self.events(keys) { view.keyDown(with: event) }
     }
@@ -86,6 +86,16 @@ final class EditorWindow {
             "Space": (" ", 49), "lt": ("<", 43),
         ]
         if name == "lt" { return character("<", modifiers: []) }
+        let arrows: [String: (Int, UInt16)] = [
+            "Left": (NSLeftArrowFunctionKey, 123), "Right": (NSRightArrowFunctionKey, 124),
+            "Down": (NSDownArrowFunctionKey, 125), "Up": (NSUpArrowFunctionKey, 126),
+        ]
+        if let (function, code) = arrows[name], let scalar = UnicodeScalar(function) {
+            let chars = String(Character(scalar))
+            return NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.function, .numericPad], timestamp: 0,
+                                    windowNumber: 0, context: nil, characters: chars, charactersIgnoringModifiers: chars,
+                                    isARepeat: false, keyCode: code)
+        }
         if let (chars, code) = named[name] {
             return NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0,
                                     context: nil, characters: chars, charactersIgnoringModifiers: chars,

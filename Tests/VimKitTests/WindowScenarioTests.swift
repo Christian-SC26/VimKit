@@ -46,6 +46,19 @@ struct WindowScenarioTests {
         #expect(inSync(editor))
     }
 
+    /// Enter, arrows and <C-u> in insert mode go through the engine as in Vim
+    /// with 'autoindent', also when typed into a window.
+    @Test func insertModeKeysInAWindow() {
+        let editor = EditorWindow(text: "    abc")
+        editor.type("A<CR>x<Esc>")
+        #expect(editor.view.string == "    abc\n    x", "the new line keeps the indent")
+        editor.type("o<Esc>")
+        #expect(editor.view.string == "    abc\n    x\n", "an untouched indent goes on <Esc>")
+        editor.type("kAyz<Left>12<C-u>!<Esc>")
+        #expect(editor.view.string == "    abc\n    xy!z\n", "<C-u> stops where the arrow left the insert")
+        #expect(inSync(editor))
+    }
+
     @Test func jumpsScrollTheCursorIntoView() {
         let editor = EditorWindow(text: Self.numbered(500))
         editor.type("G")
