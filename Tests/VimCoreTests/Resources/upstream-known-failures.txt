@@ -32,3 +32,7 @@ vim_visual_join_blank
 # S<Esc> (and cc<Esc>, o<Esc>) with nothing typed removes the indent, as in
 # Vim with 'autoindent' (checked by the Vim oracle); codemirror-vim keeps it.
 vim_S_normal
+
+# & in a :s replacement is the whole match, as in Vim (checked by the Vim
+# oracle); this test expects a literal "$&".
+vim_ex_substitute_javascript

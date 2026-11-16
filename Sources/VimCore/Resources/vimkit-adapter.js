@@ -1127,6 +1127,35 @@
     };
   }
 
+  // Vim's case modifiers in a :s replacement (\u \l \U \L \e \E) travel
+  // through vim.js as these private characters and apply here.
+  var CASE_MARKS = { u: "\ue001", l: "\ue002", U: "\ue003", L: "\ue004", e: "\ue005", E: "\ue005" };
+  function applyCaseMarks(text) {
+    if (!/[\ue001-\ue005]/.test(text)) return text;
+    var out = "", one = null, all = null;
+    for (var i = 0; i < text.length; i++) {
+      var c = text.charAt(i);
+      if (c == "\ue001" || c == "\ue002") { one = c; continue; }
+      if (c == "\ue003" || c == "\ue004") { all = c; one = null; continue; }
+      if (c == "\ue005") { all = null; one = null; continue; }
+      if (all) c = all == "\ue003" ? c.toUpperCase() : c.toLowerCase();
+      if (one) { c = one == "\ue001" ? c.toUpperCase() : c.toLowerCase(); one = null; }
+      out += c;
+    }
+    return out;
+  }
+  // A Vim :s replacement in the form vim.js (with nopcre) understands: & is
+  // the match, \& a literal &, \r a line break, case modifiers as marks.
+  function vimReplacement(text) {
+    return text.replace(/\\(.)|&/g, function (m, c) {
+      if (m == "&") return "\\0";
+      if (c == "&") return "&";
+      if (c == "r") return "\\n";
+      if (CASE_MARKS[c]) return CASE_MARKS[c];
+      return m;
+    });
+  }
+
   proto.getSearchCursor = function (query, pos) {
     var cm = this, last = null, lastResult = null, afterEmptyMatch = false;
     if (pos.ch == undefined) pos.ch = Number.MAX_VALUE;
@@ -1166,7 +1195,9 @@
       to: function () { return lastResult && lastResult.to; },
       replace: function (text) {
         if (!last) return;
+        text = applyCaseMarks(text);
         cm.$applyChange(last.from, last.to, text, false);
+        cm.$lastReplaceEnd = last.from + text.length;
         cm.$afterDispatch();
         last.to = last.from + text.length;
         if (lastResult) lastResult.to = cm.posFromIndex(last.to);
@@ -2289,6 +2320,8 @@
     var m = /^<((?:[CSAMDcsamd]-)*)(.+)>$/.exec(token);
     if (!m) return null;
     var name = m[2];
+    // As in Vim, <x> without a modifier is not a key: "<&>" is three characters.
+    if (name.length == 1 && !m[1]) return null;
     if (name.length > 1) {
       var special = notationKeys[name.toLowerCase()];
       if (special) name = special;
@@ -3242,6 +3275,8 @@
   defineHostOption("cursorline", ["cul"], "boolean", false);
   defineHostOption("cursorlineopt", ["culopt"], "string", "both");
   Vim.defineOption("clipboard", "", "string", ["cb"]);
+  // Patterns are Vim regular expressions (\(\), \+, \<, \v), not JavaScript ones.
+  Vim.setOption("pcre", false);
 
   // vim.js's action, motion and operator tables. vim.js calls their entries
   // as methods (`actions[name](...)`), so a probe entry sees the table as
@@ -3356,6 +3391,31 @@
     this.replaceRange("", new Pos(auto.line, 0), new Pos(auto.line, auto.text.length));
     this.setCursor(auto.line, 0);
   };
+
+  // ---- :&, &, g& --------------------------------------------------------------
+
+  var lastSubstitute = null; // { d, pattern, replacement, flags } in Vim syntax
+  function repeatSubstitute(cm, params, flags, count, searchPattern) {
+    var last = lastSubstitute;
+    if (!last) { showMessage(cm, "E35: No previous regular expression", true); return; }
+    var d = last.d, copy = {};
+    for (var k in params) copy[k] = params[k];
+    copy.argString = d + (searchPattern ? "" : last.pattern) + d + last.replacement + d + flags + (count ? " " + count : "");
+    copy.commandName = "substitute";
+    exCommands.substitute(cm, copy);
+  }
+  Vim.defineAction("vimkitRepeatSubstitute", function (cm, args) {
+    if (!lastSubstitute) { showMessage(cm, "E33: No previous substitute regular expression", true); return; }
+    var line = cm.getCursor().line;
+    if (args.all) {
+      repeatSubstitute(cm, { line: cm.firstLine(), lineEnd: cm.lastLine(), selectionLine: cm.firstLine(), selectionLineEnd: cm.lastLine() },
+        lastSubstitute.flags, "", true);
+    } else {
+      repeatSubstitute(cm, { selectionLine: line }, "", "", false);
+    }
+  });
+  Vim._mapCommand({ keys: "&", type: "action", action: "vimkitRepeatSubstitute", actionArgs: { all: false }, context: "normal" });
+  Vim._mapCommand({ keys: "g&", type: "action", action: "vimkitRepeatSubstitute", actionArgs: { all: true }, context: "normal" });
 
   // ---- ex commands vim.js lacks or gets wrong: :m, :t, :co, :>, :<, :j --------
 
@@ -3606,8 +3666,18 @@
     var substitute = exCommands.substitute;
     exCommands.substitute = function (cm, params) {
       var note = cm.notification, callback = params.callback, dialog = cm.dialog;
-      var parts = /^(\W)((?:\\.|(?!\1).)*)\1((?:\\.|(?!\1).)*)\1([&cegiInp#lr]*)\s*(\d+)\s*$/.exec(params.argString || "");
-      if (parts) params.argString = parts[1] + parts[2] + parts[1] + parts[3] + parts[1] + parts[4] + " " + parts[5];
+      cm.$lastReplaceEnd = null;
+      // /pat/rep/[flags][count]: Vim's replacement syntax, and the count
+      // (vim.js reads it only after a space).
+      var parts = /^(\W)((?:\\.|(?!\1).)*)(?:\1((?:\\.|(?!\1).)*)(?:\1([&cegiInp#lr]*)\s*(\d*)\s*)?)?$/.exec(params.argString || "");
+      if (parts && parts[3] != null) {
+        lastSubstitute = { d: parts[1], pattern: parts[2] || lastSearchText(), replacement: parts[3], flags: parts[4] || "" };
+      }
+      if (parts && parts[3] != null && !Vim.getOption("pcre")) {
+        var d = parts[1];
+        params.argString = d + parts[2] + d + vimReplacement(parts[3])
+          + (parts[4] != null ? d + parts[4] + (parts[5] ? " " + parts[5] : "") : "");
+      }
       var result = substitute.apply(this, arguments);
       var now = cm.notification, fresh = now && now !== note ? now.text : "";
       var m = /^(\W)((?:\\.|(?!\1).)*)/.exec(params.argString || "");
@@ -3626,10 +3696,21 @@
       // Not while asking y/n/a/q (the c flag). A match that starts at a line
       // break (:%s/\n//) leaves the cursor on it, as in Vim.
       if ((!cm.dialog || cm.dialog === dialog) && !/^\\n/.test(pattern)) {
-        cm.setCursor(firstNonBlank(cm, cm.getCursor().line));
+        // The last changed line is where the last replacement ends (it may
+        // have broken the line).
+        var end = cm.$lastReplaceEnd;
+        cm.setCursor(firstNonBlank(cm, end != null ? cm.posFromIndex(end).line : cm.getCursor().line));
       }
       return result;
     };
+
+    // :[range]&[&][flags] [count] repeats the last :s (&& keeps its flags);
+    // & in normal mode is :s, g& is :%s//~/& (with the last search pattern).
+    Vim.defineEx("&", "&", function (cm, params) {
+      var m = /^(&?)([cegiInp#lr]*)\s*(\d*)\s*$/.exec((params.argString || "").trim());
+      if (!m) { showMessage(cm, "E488: Trailing characters: " + params.argString, true); return; }
+      repeatSubstitute(cm, params, (m[1] && lastSubstitute ? lastSubstitute.flags : "") + m[2], m[3], false);
+    });
 
     // :set nu rnu sets each option.
     var set = exCommands.set;

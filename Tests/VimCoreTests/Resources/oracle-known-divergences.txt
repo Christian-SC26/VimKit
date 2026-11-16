@@ -3,24 +3,9 @@
 # first oracle run (16.11.2026); each group is a fix to make, after which its
 # names come off this list (the test fails until they do).
 
-# :s replacement and pattern syntax: \( \) groups with \+, & and \u \U in the
-# replacement, \r for a line break; & g& :&& and
-# & without a previous substitute (E33).
-s-backref
-s-ampersand
-s-upper
-s-upper-all
-s-newline-in-replacement
-ampersand-repeat
-g-ampersand
-ampersand-ampersand-ex
-ampersand-noop
-
-# Search: offsets (/e, /+1), \< \>, \v; motions go and g_.
+# Search offsets (/e, /+1); motions go and g_.
 search-offset-end
 search-offset-line
-search-regex-word-boundary
-search-very-magic
 go-byte
 g_-last-nonblank
 

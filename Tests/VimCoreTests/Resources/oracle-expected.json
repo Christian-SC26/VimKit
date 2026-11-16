@@ -1,6 +1,6 @@
 {
 "generator": "Vim 9.2.1351",
-"casesSHA256": "e10d4ade38e8b123c64b3183def72d4ed97ff79242b1d09527aa08bff7933a72",
+"casesSHA256": "04ae3d0a7af9e51e3a334887a6e656bab98019392974ba9915237da2c8f007e7",
 "cases": [
 {"name":"w-punctuation","expected":{"registerType":"","column":9,"register":"","line":1,"mode":"n","text":["foo.bar(baz) qux"],"error":""},"at":[1,1],"keys":"wwww","text":["foo.bar(baz) qux"]},
 {"name":"W-bigword","expected":{"registerType":"","column":20,"register":"","line":1,"mode":"n","text":["foo.bar(baz) qux-x end"],"error":""},"at":[1,1],"keys":"WW","text":["foo.bar(baz) qux-x end"]},
@@ -221,6 +221,12 @@
 {"name":"s-newline-in-replacement","expected":{"registerType":"","column":1,"register":"","line":3,"mode":"n","text":["a","b","c"],"error":""},"at":[1,1],"keys":":s/,/\\r/g<CR>","text":["a,b,c"]},
 {"name":"s-match-newline","expected":{"registerType":"","column":3,"register":"","line":1,"mode":"n","text":["abc"],"error":""},"at":[1,1],"keys":":%s/\\n//<CR>","text":["a","b","c"]},
 {"name":"ampersand-repeat","expected":{"registerType":"","column":1,"register":"","line":2,"mode":"n","text":["X a","X a"],"error":""},"at":[1,1],"keys":":s/a/X/<CR>j&","text":["a a","a a"]},
+{"name":"ampersand-dot","expected":{"registerType":"","column":1,"register":"","line":3,"mode":"n","text":["X a","X a","a a"],"error":""},"at":[1,1],"keys":":s/a/X/<CR>j&j.","text":["a a","a a","a a"]},
+{"name":"percent-ampersand-ampersand","expected":{"registerType":"","column":1,"register":"","line":3,"mode":"n","text":["X X","X X","X X"],"error":""},"at":[1,1],"keys":":s/a/X/g<CR>:%&&<CR>","text":["a a","a a","a a"]},
+{"name":"s-lower-all","expected":{"registerType":"","column":1,"register":"","line":1,"mode":"n","text":["one two"],"error":""},"at":[1,1],"keys":":s/\\w\\+/\\L&/g<CR>","text":["ONE Two"]},
+{"name":"s-escaped-ampersand","expected":{"registerType":"","column":1,"register":"","line":1,"mode":"n","text":["x&y"],"error":""},"at":[1,1],"keys":":s/a/\\&/<CR>","text":["xay"]},
+{"name":"search-zs","expected":{"registerType":"","column":8,"register":"","line":1,"mode":"n","text":["bar foobar"],"error":""},"at":[1,1],"keys":"/foo\\zsbar<CR>","text":["bar foobar"]},
+{"name":"search-alternation","expected":{"registerType":"","column":7,"register":"","line":1,"mode":"n","text":["a dog dogs"],"error":""},"at":[1,1],"keys":"/\\(cat\\|dog\\)s<CR>","text":["a dog dogs"]},
 {"name":"g-ampersand","expected":{"registerType":"","column":1,"register":"","line":2,"mode":"n","text":["X X","X a"],"error":""},"at":[1,1],"keys":":s/a/X/<CR>g&","text":["a a","a a"]},
 {"name":"ampersand-ampersand-ex","expected":{"registerType":"","column":1,"register":"","line":2,"mode":"n","text":["X X","X X"],"error":""},"at":[1,1],"keys":":s/a/X/g<CR>j:&&<CR>","text":["a a","a a"]},
 {"name":"g-delete","expected":{"registerType":"V","column":1,"register":"x\n","line":2,"mode":"n","text":["a","b"],"error":""},"at":[1,1],"keys":":g/x/d<CR>","text":["a","x","b","x"]},

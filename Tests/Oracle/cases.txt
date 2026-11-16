@@ -1052,6 +1052,34 @@ keys :s/a/X/<CR>j&
 | a a
 | a a
 
+[ampersand-dot]
+keys :s/a/X/<CR>j&j.
+| a a
+| a a
+| a a
+
+[percent-ampersand-ampersand]
+keys :s/a/X/g<CR>:%&&<CR>
+| a a
+| a a
+| a a
+
+[s-lower-all]
+keys :s/\w\+/\L&/g<CR>
+| ONE Two
+
+[s-escaped-ampersand]
+keys :s/a/\&/<CR>
+| xay
+
+[search-zs]
+keys /foo\zsbar<CR>
+| bar foobar
+
+[search-alternation]
+keys /\(cat\|dog\)s<CR>
+| a dog dogs
+
 [g-ampersand]
 keys :s/a/X/<CR>g&
 | a a
