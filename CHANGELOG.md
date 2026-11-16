@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Visual mode as in Vim: `<C-a>` / `<C-x>` add `[count]` to the first number
+  of each selected line (within the block or from the start column), and
+  `g<C-a>` / `g<C-x>` add `[count]`, `2*[count]`, …; after `<C-v>I` and
+  `<C-v>A` the cursor is at the top left of the block; a block yanked over a
+  line that ends before it holds spaces as wide as the block.
 - Text objects as in Vim: `i"` / `a"` skip escaped quotes, pair quotes from
   the start of the line and take the first string after the cursor; `a"`
   takes the white space after the string (or before it); `2i"` keeps the
@@ -46,10 +51,10 @@
   and no longer stops `:g` on a line without a match; "N lines yanked" only
   above 2 lines and no "Found N matches" after `:s` (unless the `n` flag);
   these messages are no longer reported as errors.
-- Vim oracle: `OracleTests` replays 325 cases from `Tests/Oracle/cases.txt`
+- Vim oracle: `OracleTests` replays 332 cases from `Tests/Oracle/cases.txt`
   and compares them with what real Vim 9.2 does, as recorded in
   `oracle-expected.json` by `Tests/Oracle/regenerate.sh`, which also lists
-  where Neovim differs (`Tests/Oracle/NEOVIM.md`). 314 match; the 11
+  where Neovim differs (`Tests/Oracle/NEOVIM.md`). 326 match; the 6
   differences are listed by cause in `oracle-known-divergences.txt`.
 - Registers as in Vim: `"*`/`"+` on the clipboard (`'clipboard'`
   unnamed/unnamedplus), `"%`/`"#` from `VimEngine.fileName` /

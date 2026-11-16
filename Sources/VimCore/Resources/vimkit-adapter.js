@@ -3313,6 +3313,18 @@
       return result;
     };
 
+    // <C-v>I / <C-v>A: remember the top left of the block for the cursor.
+    var enterInsertMode = vimActions.enterInsertMode;
+    vimActions.enterInsertMode = function (cm, actionArgs, vim) {
+      var start = null;
+      if (vim.visualBlock) {
+        start = new Pos(Math.min(vim.sel.anchor.line, vim.sel.head.line), Math.min(vim.sel.anchor.ch, vim.sel.head.ch));
+      }
+      var result = enterInsertMode.apply(this, arguments);
+      if (start) cm.$blockInsertStart = start;
+      return result;
+    };
+
     // A characterwise visual selection whose last character is the line
     // break (v$, vi{) reaches one past the line; operators take the line
     // break with it, as in Vim.
@@ -3321,6 +3333,9 @@
       if (typeof operator != "function") return;
       vimOperators[name] = function (cm, args, ranges) {
         var vim = cm.state.vim;
+        if (vim && vim.visualBlock && ranges && (name == "yank" || name == "delete" || name == "change")) {
+          return withBlockPadding(cm, vim, ranges, operator, this, arguments);
+        }
         if (vim && vim.visualMode && !vim.visualLine && !vim.visualBlock && ranges) {
           var past = function (p) {
             return p.line < cm.lastLine() && p.ch == cm.getLine(p.line).length + 1 ? new Pos(p.line + 1, 0) : p;
@@ -3482,6 +3497,68 @@
     this.replaceRange("", new Pos(auto.line, 0), new Pos(auto.line, auto.text.length));
     this.setCursor(auto.line, 0);
   };
+
+  // ---- visual block over short lines; <C-a> / <C-x> in visual mode -------------
+
+  // A block yanked over a line that ends before the block starts holds that
+  // line as spaces as wide as the block (a line that ends just where the
+  // block starts holds nothing), as in Vim.
+  function withBlockPadding(cm, vim, ranges, operator, self, args) {
+    var a = vim.sel.anchor, h = vim.sel.head;
+    var left = Math.min(a.ch, h.ch), width = Math.abs(a.ch - h.ch) + 1;
+    var toEnd = vim.lastHPos == Infinity || h.ch == Infinity;
+    if (toEnd) return operator.apply(self, args);
+    var getSelections = cm.getSelections;
+    cm.getSelections = function () {
+      var texts = getSelections.apply(this, arguments);
+      return texts.map(function (t, i) {
+        var line = ranges[i] && Math.min(ranges[i].anchor.line, ranges[i].head.line);
+        return t == "" && line != null && cm.getLine(line).length < left ? new Array(width + 1).join(" ") : t;
+      });
+    };
+    try { return operator.apply(self, args); }
+    finally { delete cm.getSelections; }
+  }
+
+  // <C-a> / <C-x> add [count] to the first number of each selected line;
+  // g<C-a> / g<C-x> add [count], 2*[count], ... down the lines.
+  Vim.defineAction("vimkitVisualIncrement", function (cm, args, vim) {
+    var a = vim.sel.anchor, h = vim.sel.head, top = Math.min(a.line, h.line), bottom = Math.max(a.line, h.line);
+    var before = a.line < h.line || (a.line == h.line && a.ch <= h.ch);
+    var first = before ? a : h, last = before ? h : a;
+    var left = Math.min(a.ch, h.ch), right = vim.lastHPos == Infinity ? Infinity : Math.max(a.ch, h.ch);
+    var block = vim.visualBlock, linewise = vim.visualLine;
+    var step = (args.repeat || 1) * (args.increase ? 1 : -1), n = 0;
+    var re = /(-?)(?:(0x)([\da-f]+)|(0b|0|)(\d+))/i;
+    cm.operation(function () {
+      for (var line = top; line <= bottom; line++) {
+        var text = cm.getLine(line), from = 0, to = text.length;
+        if (block) { from = left; to = Math.min(text.length, right + 1); }
+        else if (!linewise) {
+          if (line == first.line) from = first.ch;
+          if (line == last.line) to = Math.min(text.length, last.ch + 1);
+        }
+        var m = re.exec(text.slice(from, to));
+        if (!m) continue;
+        n++;
+        var baseStr = m[2] || m[4], digits = m[3] || m[5];
+        var base = { "0b": 2, "0": 8, "": 10, "0x": 16 }[baseStr.toLowerCase()];
+        if (baseStr == "0" && /[89]/.test(digits)) { base = 10; digits = "0" + digits; baseStr = ""; }
+        var number = parseInt(m[1] + digits, base) + step * (args.progressive ? n : 1);
+        var str = Math.abs(number).toString(base);
+        var pad = baseStr ? new Array(Math.max(digits.length - str.length, 0) + 1).join("0") : "";
+        str = (number < 0 ? "-" : "") + baseStr + pad + str;
+        var start = from + m.index;
+        cm.replaceRange(str, new Pos(line, start), new Pos(line, start + m[0].length));
+      }
+    });
+    Vim.exitVisualMode(cm, false);
+    cm.setCursor(block ? new Pos(top, left) : linewise ? new Pos(top, 0) : first);
+  });
+  [["<C-a>", true, false], ["<C-x>", false, false], ["g<C-a>", true, true], ["g<C-x>", false, true]].forEach(function (k) {
+    Vim._mapCommand({ keys: k[0], type: "action", action: "vimkitVisualIncrement",
+      actionArgs: { increase: k[1], progressive: k[2] }, context: "visual" });
+  });
 
   // ---- quote text objects -------------------------------------------------------
 
@@ -3991,6 +4068,12 @@
       var cm = new CodeMirror(host, text, options);
       cm.on("vim-mode-change", function (e) {
         if (e.mode != "insert" && e.mode != "replace") cm.$dropAutoIndent();
+        // A block insert (<C-v>I, <C-v>A) ends at the top left of the block.
+        if (e.mode == "normal" && cm.$blockInsertStart) {
+          var at = cm.$blockInsertStart;
+          cm.$blockInsertStart = null;
+          cm.setCursor(at);
+        } else if (e.mode != "insert") cm.$blockInsertStart = null;
         // The insert starts where the first key after entering it finds the
         // cursor (A, o and the like move it after the mode changes).
         cm.$insertStart = null;

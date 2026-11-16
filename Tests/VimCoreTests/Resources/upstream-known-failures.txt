@@ -46,3 +46,7 @@ vim_di]_middle_spc
 vim_di<_middle_spc
 vim_di>_middle_spc
 vim_vi{_middle_spc
+
+# After <C-v>A<Esc> the cursor is at the top left of the block, as in Vim
+# (checked by the Vim oracle); codemirror-vim leaves it after the insert.
+vim_visual_block_backwards

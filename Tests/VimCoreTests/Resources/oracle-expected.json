@@ -1,6 +1,6 @@
 {
 "generator": "Vim 9.2.1351",
-"casesSHA256": "034ea24f3b1193f6823e5a38598b231fed3b5a4f011d88435c7aa043cf49c822",
+"casesSHA256": "5dac265990e17f0958679c20f253e2a345dacabaa8aa405d2979bcdf59d721c9",
 "cases": [
 {"name":"w-punctuation","expected":{"registerType":"","column":9,"register":"","line":1,"mode":"n","text":["foo.bar(baz) qux"],"error":""},"at":[1,1],"keys":"wwww","text":["foo.bar(baz) qux"]},
 {"name":"W-bigword","expected":{"registerType":"","column":20,"register":"","line":1,"mode":"n","text":["foo.bar(baz) qux-x end"],"error":""},"at":[1,1],"keys":"WW","text":["foo.bar(baz) qux-x end"]},
@@ -188,6 +188,13 @@
 {"name":"ctrl-v-r","expected":{"registerType":"","column":1,"register":"","line":1,"mode":"n","text":["xxcd","xxgh"],"error":""},"at":[1,1],"keys":"<C-v>jlrx","text":["abcd","efgh"]},
 {"name":"ctrl-v-c","expected":{"registerType":"b2","column":2,"register":"bc\nfg","line":1,"mode":"n","text":["aXd","eXh"],"error":""},"at":[1,1],"keys":"l<C-v>jlcX<Esc>","text":["abcd","efgh"]},
 {"name":"ctrl-v-y-p","expected":{"registerType":"b2","column":5,"register":"ab\nef","line":1,"mode":"n","text":["abcdab","efghef"],"error":""},"at":[1,1],"keys":"<C-v>jly$p","text":["abcd","efgh"]},
+{"name":"ctrl-v-short-lines-y","expected":{"registerType":"b2","column":3,"register":"cd\n  \nc","line":1,"mode":"n","text":["abcd","a","abc","efgh"],"error":""},"at":[1,1],"keys":"ll<C-v>ljjy","text":["abcd","a","abc","efgh"]},
+{"name":"ctrl-v-line-ends-at-block","expected":{"registerType":"b1","column":3,"register":"c\n\ng","line":1,"mode":"n","text":["abcd","ab","efgh"],"error":""},"at":[1,1],"keys":"ll<C-v>jjy","text":["abcd","ab","efgh"]},
+{"name":"ctrl-v-I-cursor","expected":{"registerType":"","column":2,"register":"","line":1,"mode":"n","text":["aXbcd","eXfgh","iXjkl"],"error":""},"at":[1,1],"keys":"l<C-v>jjIX<Esc>","text":["abcd","efgh","ijkl"]},
+{"name":"v-ctrl-x-count","expected":{"registerType":"","column":1,"register":"","line":1,"mode":"n","text":["x 7","y 2"],"error":""},"at":[1,1],"keys":"Vj3<C-x>","text":["x 10","y 5"]},
+{"name":"v-ctrl-a-from-column","expected":{"registerType":"","column":3,"register":"","line":1,"mode":"n","text":["1 3 3"],"error":""},"at":[1,1],"keys":"wv$<C-a>","text":["1 2 3"]},
+{"name":"ctrl-v-ctrl-a-column","expected":{"registerType":"","column":3,"register":"","line":1,"mode":"n","text":["1 2","2 3"],"error":""},"at":[1,1],"keys":"w<C-v>j<C-a>","text":["1 1","2 2"]},
+{"name":"g-ctrl-a-skips-lines","expected":{"registerType":"","column":1,"register":"","line":1,"mode":"n","text":["1","x","2"],"error":""},"at":[1,1],"keys":"Vjjg<C-a>","text":["0","x","0"]},
 {"name":"ctrl-v-short-lines","expected":{"registerType":"b1","column":3,"register":"c\n \ng","line":1,"mode":"n","text":["abd","a","efh"],"error":""},"at":[1,1],"keys":"ll<C-v>jjd","text":["abcd","a","efgh"]},
 {"name":"v-gU","expected":{"registerType":"","column":1,"register":"","line":1,"mode":"n","text":["HELLO world"],"error":""},"at":[1,1],"keys":"veU","text":["hello world"]},
 {"name":"v-gJ","expected":{"registerType":"","column":2,"register":"","line":1,"mode":"n","text":["a  b"],"error":""},"at":[1,1],"keys":"VjgJ","text":["a","  b"]},

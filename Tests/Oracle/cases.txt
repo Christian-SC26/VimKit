@@ -911,6 +911,45 @@ keys <C-v>jly$p
 | abcd
 | efgh
 
+[ctrl-v-short-lines-y]
+keys ll<C-v>ljjy
+| abcd
+| a
+| abc
+| efgh
+
+[ctrl-v-line-ends-at-block]
+keys ll<C-v>jjy
+| abcd
+| ab
+| efgh
+
+[ctrl-v-I-cursor]
+keys l<C-v>jjIX<Esc>
+| abcd
+| efgh
+| ijkl
+
+[v-ctrl-x-count]
+keys Vj3<C-x>
+| x 10
+| y 5
+
+[v-ctrl-a-from-column]
+keys wv$<C-a>
+| 1 2 3
+
+[ctrl-v-ctrl-a-column]
+keys w<C-v>j<C-a>
+| 1 1
+| 2 2
+
+[g-ctrl-a-skips-lines]
+keys Vjjg<C-a>
+| 0
+| x
+| 0
+
 [ctrl-v-short-lines]
 keys ll<C-v>jjd
 | abcd
