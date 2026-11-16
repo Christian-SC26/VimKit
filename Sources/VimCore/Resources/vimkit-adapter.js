@@ -1983,6 +1983,8 @@
     })(node);
     return { before: before, after: after };
   }
+  // vim.js shows every message in red; these ones are not errors.
+  var infoMessage = /^(\d+ lines yanked|Found \d+ matches|No matches found for pattern|Codemirror-vim version|\s)/;
   function isErrorTemplate(node) {
     for (var n = node; n && n.nodeType === 1; n = n.childNodes[0]) if (n.style && n.style.color === "red") return true;
     return false;
@@ -2038,8 +2040,12 @@
       template.remove();
       cm.$emitState();
     }
+    var text = template.textContent;
+    // Vim reports yanks only above 'report' (2) lines.
+    var yanked = /^(\d+) lines yanked/.exec(text);
+    if (yanked && +yanked[1] <= 2) return function () {};
     this.$closeNotification(close);
-    var note = { text: template.textContent, isError: isErrorTemplate(template) };
+    var note = { text: text, isError: isErrorTemplate(template) && !infoMessage.test(text) };
     this.notification = note;
     this.wrapper.appendChild(template);
     var duration = options && typeof options.duration !== "undefined" ? options.duration : 5000;
@@ -2160,6 +2166,7 @@
     if (this.dialog && this.dialog.input) {
       recordPromptKey(e);
       if (!this.$promptRegisterKey(e)) this.$dialogKey(e);
+      this.$clipNormalCursor();
       this.$emitState();
       return true;
     }
@@ -2197,6 +2204,7 @@
       }
     }
     if (!result && vim.insertMode) vim.status = "";
+    if (result) this.$clipNormalCursor();
     if (!vim.insertMode) this.history.close();
     if (result) signal(this, "vim-keypress", key);
     this.$flush();
@@ -3181,15 +3189,143 @@
   defineHostOption("cursorlineopt", ["culopt"], "string", "both");
   Vim.defineOption("clipboard", "", "string", ["cb"]);
 
+  // vim.js's action, motion and operator tables. vim.js calls their entries
+  // as methods (`actions[name](...)`), so a probe entry sees the table as
+  // `this`; wrapping an entry fixes vim.js's behaviour without editing it.
+  var vimActions = null, vimMotions = null, vimOperators = null;
+  Vim.defineAction("vimkitTables", function () { vimActions = this; });
+  Vim.defineMotion("vimkitTables", function (cm, head) { vimMotions = this; return head; });
+  Vim.defineOperator("vimkitTables", function () { vimOperators = this; });
+  Vim._mapCommand({ keys: "<VimKitTablesA>", type: "action", action: "vimkitTables" });
+  Vim._mapCommand({ keys: "<VimKitTablesO>", type: "operatorMotion", operator: "vimkitTables", motion: "vimkitTables" });
+  function captureTables(cm) {
+    if (vimActions) return;
+    Vim.handleKey(cm, "<VimKitTablesA>", "mapping");
+    Vim.handleKey(cm, "<VimKitTablesO>", "mapping");
+    if (vimActions && vimOperators) wrapVimTables();
+  }
+
+  function wrapVimTables() {
+    // P (and p) leave the cursor on the last pasted character, as in Vim;
+    // vim.js puts it one past for a characterwise P.
+    var paste = vimActions.paste;
+    vimActions.paste = function (cm, args, vim) {
+      var visual = vim.visualMode, before = cm.getCursor();
+      var reg = Vim.getRegisterController().getRegister(args.registerName);
+      var text = reg ? reg.toString() : "";
+      var result = paste.apply(this, arguments);
+      if (!args.after && !visual && text && reg && !reg.linewise && !reg.blockwise && !/\n/.test(text)) {
+        var cur = cm.getCursor();
+        if (cur.line == before.line && cur.ch > before.ch) cm.setCursor(cur.line, cur.ch - 1);
+      }
+      return result;
+    };
+
+    // Linewise deletes through the last line (dd there, dG, :$d, :g/x/d):
+    // remove the line break before them, store just the lines ("c\n", not
+    // "\nc\n"), and leave no empty line behind.
+    var del = vimOperators["delete"];
+    vimOperators["delete"] = function (cm, args, ranges) {
+      var vim = cm.state.vim;
+      if (args.linewise && !vim.visualBlock && ranges.length == 1) {
+        var a = ranges[0].anchor, h = ranges[0].head;
+        var start = a.line <= h.line ? a : h, end = start === a ? h : a;
+        var last = cm.lastLine();
+        if (end.line > last && start.line > cm.firstLine()) {
+          var lastEnd = new Pos(last, cm.getLine(last).length);
+          var text = cm.getRange(new Pos(start.line, 0), lastEnd);
+          cm.replaceRange("", new Pos(start.line - 1, cm.getLine(start.line - 1).length), lastEnd);
+          Vim.getRegisterController().pushText(args.registerName, "delete", text, true, false);
+          var line = cm.getLine(start.line - 1), first = line.search(/\S/);
+          return new Pos(start.line - 1, first < 0 ? Math.max(line.length - 1, 0) : first);
+        }
+      }
+      return del.apply(this, arguments);
+    };
+  }
+
+  function firstNonBlank(cm, line) {
+    var text = cm.getLine(line), ch = text.search(/\S/);
+    return new Pos(line, ch < 0 ? Math.max(text.length - 1, 0) : ch);
+  }
+  function lastSearchText() {
+    var reg = Vim.getRegisterController().getRegister("/");
+    return reg ? reg.toString() : "";
+  }
+
+  // In normal mode the cursor stays on a character: after a command it is
+  // never past the end of the line (~ at the end, :normal A;, ...).
+  proto.$clipNormalCursor = function () {
+    var vim = this.state.vim;
+    if (!vim || vim.insertMode || vim.visualMode || vim.insertModeReturn || this.dialog) return;
+    var input = vim.inputState;
+    if (input.operator || input.keyBuffer.length || this.sel.ranges.length != 1 || this.somethingSelected()) return;
+    var cur = this.getCursor(), line = this.getLine(cur.line), len = line.length;
+    if (!len || cur.ch < len) return;
+    var ch = len - 1;
+    if (ch > 0 && /[\udc00-\udfff]/.test(line.charAt(ch)) && /[\ud800-\udbff]/.test(line.charAt(ch - 1))) ch--;
+    var hpos = vim.lastHPos;
+    this.setCursor(cur.line, ch);
+    vim.lastHPos = hpos == cur.ch ? ch : hpos;
+  };
+
   // vim.js's ex command table, for wrapping its commands.
   var exCommands = null;
   Vim.defineEx("vimkitexcommands", "vimkitexcommands", function () { exCommands = this; });
   function wrapExCommands(cm) {
+    captureTables(cm);
     if (exCommands) return;
     var history = Vim.getRegisterController().getRegister(":"), previous = history.toString();
     Vim.handleEx(cm, "vimkitexcommands");
     history.setText(previous);
     if (!exCommands) return;
+
+    // :[range]d [x] [count]: the register and count, and the cursor on the
+    // line after the deleted ones, at its first non-blank.
+    exCommands["delete"] = function (cm, params) {
+      var line = params.selectionLine;
+      var end = isNaN(params.selectionLineEnd) ? line : params.selectionLineEnd;
+      var arg = (params.argString || "").trim();
+      // Anything else after :d is ignored, as vim.js does.
+      var m = /^([^\d\s])?\s*(\d+)?$/.exec(arg) || [];
+      if (m[1] && !Vim.getRegisterController().isValidRegister(m[1])) m = [];
+      if (m[2]) {
+        line = end;
+        end = Math.min(line + +m[2] - 1, cm.lastLine());
+      }
+      vimOperators["delete"](cm, { linewise: true, registerName: m[1] || "" },
+        [{ anchor: new Pos(line, 0), head: new Pos(end + 1, 0) }]);
+      cm.setCursor(firstNonBlank(cm, Math.min(line, cm.lastLine())));
+    };
+
+    // :s leaves the cursor on the last line it changed, at the first
+    // non-blank. No match is E486, except inside :g, which goes on.
+    var substitute = exCommands.substitute;
+    exCommands.substitute = function (cm, params) {
+      var note = cm.notification, callback = params.callback, dialog = cm.dialog;
+      var result = substitute.apply(this, arguments);
+      var now = cm.notification, fresh = now && now !== note ? now.text : "";
+      var m = /^(\W)((?:\\.|(?!\1).)*)/.exec(params.argString || "");
+      var pattern = m && m[2] ? m[2] : lastSearchText();
+      if (/^No matches for /.test(fresh)) {
+        if (callback) {
+          if (cm.notification === now) cm.$closeNotification();
+          callback();
+        } else {
+          showMessage(cm, "E486: Pattern not found: " + pattern, true);
+        }
+        return result;
+      }
+      // vim.js reports the count of every :s; Vim only with the n flag.
+      if (/^Found \d+ matches/.test(fresh) && !/n[^\/]*$/.test(params.argString || "")) cm.$closeNotification();
+      // Not while asking y/n/a/q (the c flag). A match that starts at a line
+      // break (:%s/\n//) leaves the cursor on it, as in Vim.
+      if ((!cm.dialog || cm.dialog === dialog) && !/^\\n/.test(pattern)) {
+        cm.setCursor(firstNonBlank(cm, cm.getCursor().line));
+      }
+      return result;
+    };
+
     // :set nu rnu sets each option.
     var set = exCommands.set;
     exCommands.set = function (cm, params) {

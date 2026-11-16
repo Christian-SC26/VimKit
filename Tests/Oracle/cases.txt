@@ -354,6 +354,16 @@ keys yy2P
 keys wywP
 | one two three
 
+[P-count]
+keys yl3P
+| ab
+
+[dd-last-line-cursor-indent]
+keys Gdd
+| a
+|     b
+| c
+
 [ddp-swap]
 keys ddp
 | first
@@ -1032,6 +1042,13 @@ keys :g/x/s/a/Y/<CR>
 | a x
 | a
 | a x
+
+[g-subst-some-lines-no-match]
+keys :g/x/s/a/Y/<CR>
+| a x
+| x
+| a x
+| b
 
 [g-normal]
 keys :g/x/normal A;<CR>

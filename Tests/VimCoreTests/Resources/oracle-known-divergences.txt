@@ -3,36 +3,8 @@
 # first oracle run (16.11.2026); each group is a fix to make, after which its
 # names come off this list (the test fails until they do).
 
-# The cursor ends past the last character in normal mode, or one column off
-# after a put.
-tilde
-tilde-count
-normal-range
-g-normal
-yw-P
-P-characterwise-cursor
-
-# Cursor after ex commands: Vim puts it on the last line changed (:s, :g, :v)
-# or the line after a deleted range, at the first non-blank.
-s-global
-s-cursor-after
-s-empty-pattern-reuses-search
-g-delete
-v-delete
-range-delete
-
-# Deleting the last line stores "\nline\n" in the register instead of "line\n".
-dd-last-line
-last-line-delete
-g-bang
-undo-cursor
-
-# dG from the middle leaves an empty last line.
-dG
-
 # Ex commands that are missing or ignore their range, count or register:
-# :m, :t, :co, :> and :< with a range, :j with a range, :j!, :d {count},
-# :d {register}, :s with a count.
+# :m, :t, :co, :> and :< with a range, :j with a range, :j!, :s with a count.
 move-top
 move-bottom
 g-move-reverse
@@ -42,19 +14,16 @@ shift-range
 shift-left-range
 join-range
 join-bang
-delete-count
-delete-into-register
 s-count-flag
 
 # :s replacement and pattern syntax: \( \) groups with \+, & and \u \U in the
-# replacement, \r for a line break, E486 when nothing matches; & g& :&& and
+# replacement, \r for a line break; & g& :&& and
 # & without a previous substitute (E33).
 s-backref
 s-ampersand
 s-upper
 s-upper-all
 s-newline-in-replacement
-s-not-found
 ampersand-repeat
 g-ampersand
 ampersand-ampersand-ex

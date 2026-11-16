@@ -80,6 +80,8 @@ struct OracleTests {
         let vim = VimEngine(text: item.text.joined(separator: "\n"), runtime: runtime)
         vim.setCursor(line: item.at[0] - 1, column: item.at[1] - 1)
         vim.feed(item.keys)
+        // Read the message first: pending timers include the one that hides it.
+        let error = vim.status.messageIsError ? vim.status.message ?? "" : ""
         runtime.firePendingTimers()
 
         let want = item.expected
@@ -91,7 +93,7 @@ struct OracleTests {
             mode: Self.vimMode(vim.mode),
             register: register?.text ?? "",
             registerType: register.map(Self.vimRegisterType) ?? "",
-            error: vim.status.messageIsError ? vim.status.message ?? "" : ""
+            error: error
         )
 
         var differences: [String] = []

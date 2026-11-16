@@ -1,6 +1,6 @@
 {
 "generator": "Vim 9.2.1351",
-"casesSHA256": "c419e1ba588874c834cafce7ad1f168e123c562c7ce8937a0cabd741c1d4eb6c",
+"casesSHA256": "241ed4a7f91cfddd0ca609bf668ec70319ad23bf2405c1afc09a5031bbba873e",
 "cases": [
 {"name":"w-punctuation","expected":{"registerType":"","column":9,"register":"","line":1,"mode":"n","text":["foo.bar(baz) qux"],"error":""},"at":[1,1],"keys":"wwww","text":["foo.bar(baz) qux"]},
 {"name":"W-bigword","expected":{"registerType":"","column":20,"register":"","line":1,"mode":"n","text":["foo.bar(baz) qux-x end"],"error":""},"at":[1,1],"keys":"WW","text":["foo.bar(baz) qux-x end"]},
@@ -70,6 +70,8 @@
 {"name":"yy-p","expected":{"registerType":"V","column":1,"register":"a\n","line":3,"mode":"n","text":["a","b","a"],"error":""},"at":[1,1],"keys":"yyjp","text":["a","b"]},
 {"name":"yy-P-count","expected":{"registerType":"V","column":1,"register":"a\n","line":1,"mode":"n","text":["a","a","a","b"],"error":""},"at":[1,1],"keys":"yy2P","text":["a","b"]},
 {"name":"yw-P","expected":{"registerType":"v","column":8,"register":"two ","line":1,"mode":"n","text":["one two two three"],"error":""},"at":[1,1],"keys":"wywP","text":["one two three"]},
+{"name":"P-count","expected":{"registerType":"v","column":3,"register":"a","line":1,"mode":"n","text":["aaaab"],"error":""},"at":[1,1],"keys":"yl3P","text":["ab"]},
+{"name":"dd-last-line-cursor-indent","expected":{"registerType":"V","column":5,"register":"c\n","line":2,"mode":"n","text":["a","    b"],"error":""},"at":[1,1],"keys":"Gdd","text":["a","    b","c"]},
 {"name":"ddp-swap","expected":{"registerType":"V","column":1,"register":"first\n","line":2,"mode":"n","text":["second","first"],"error":""},"at":[1,1],"keys":"ddp","text":["first","second"]},
 {"name":"xp-swap","expected":{"registerType":"v","column":2,"register":"a","line":1,"mode":"n","text":["ba"],"error":""},"at":[1,1],"keys":"xp","text":["ab"]},
 {"name":"p-characterwise-multiline","expected":{"registerType":"v","column":4,"register":"abc\nd","line":1,"mode":"n","text":["abcabc","d","def"],"error":""},"at":[1,1],"keys":"vjy$p","text":["abc","def"]},
@@ -214,6 +216,7 @@
 {"name":"v-delete","expected":{"registerType":"V","column":1,"register":"b\n","line":2,"mode":"n","text":["x","x"],"error":""},"at":[1,1],"keys":":v/x/d<CR>","text":["a","x","b","x"]},
 {"name":"g-bang","expected":{"registerType":"V","column":1,"register":"b\n","line":1,"mode":"n","text":["x"],"error":""},"at":[1,1],"keys":":g!/x/d<CR>","text":["a","x","b"]},
 {"name":"g-subst","expected":{"registerType":"","column":1,"register":"","line":3,"mode":"n","text":["Y x","a","Y x"],"error":""},"at":[1,1],"keys":":g/x/s/a/Y/<CR>","text":["a x","a","a x"]},
+{"name":"g-subst-some-lines-no-match","expected":{"registerType":"","column":1,"register":"","line":3,"mode":"n","text":["Y x","x","Y x","b"],"error":""},"at":[1,1],"keys":":g/x/s/a/Y/<CR>","text":["a x","x","a x","b"]},
 {"name":"g-normal","expected":{"registerType":"","column":2,"register":"","line":3,"mode":"n","text":["x;","a","x;"],"error":""},"at":[1,1],"keys":":g/x/normal A;<CR>","text":["x","a","x"]},
 {"name":"g-move-reverse","expected":{"registerType":"","column":1,"register":"","line":1,"mode":"n","text":["3","2","1"],"error":""},"at":[1,1],"keys":":g/^/m0<CR>","text":["1","2","3"]},
 {"name":"range-delete","expected":{"registerType":"V","column":1,"register":"b\nc\n","line":2,"mode":"n","text":["a","d"],"error":""},"at":[1,1],"keys":":2,3d<CR>","text":["a","b","c","d"]},

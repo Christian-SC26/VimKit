@@ -2,10 +2,20 @@
 
 ## Unreleased
 
-- Vim oracle: `OracleTests` replays 274 cases from `Tests/Oracle/cases.txt`
+- Matches Vim where the oracle showed it did not: in normal mode the cursor
+  never ends past the last character (`~` at the end, `:normal A;`); `P`
+  leaves it on the last pasted character; deleting through the last line
+  (`dd` there, `dG`, `:$d`, `:g/x/d`) stores `line\n`, not `\nline\n`, and
+  leaves no empty line; `:d` takes a register and a count (`:d a`, `:d 3`)
+  and leaves the cursor on the next line; `:s` leaves it at the first
+  non-blank of the last changed line, reports `E486` when nothing matches
+  and no longer stops `:g` on a line without a match; "N lines yanked" only
+  above 2 lines and no "Found N matches" after `:s` (unless the `n` flag);
+  these messages are no longer reported as errors.
+- Vim oracle: `OracleTests` replays 277 cases from `Tests/Oracle/cases.txt`
   and compares them with what real Vim 9.2 does, as recorded in
   `oracle-expected.json` by `Tests/Oracle/regenerate.sh`, which also lists
-  where Neovim differs (`Tests/Oracle/NEOVIM.md`). 201 match; the 73
+  where Neovim differs (`Tests/Oracle/NEOVIM.md`). 224 match; the 53
   differences are listed by cause in `oracle-known-divergences.txt`.
 - Registers as in Vim: `"*`/`"+` on the clipboard (`'clipboard'`
   unnamed/unnamedplus), `"%`/`"#` from `VimEngine.fileName` /

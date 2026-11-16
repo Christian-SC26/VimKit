@@ -14,3 +14,11 @@ vim_yank_visual_block
 vim_yank_append_line_to_line_register
 vim_yank_append_line_to_word_register
 vim_yank_append_word_to_line_register
+
+# Characterwise P leaves the cursor on the last pasted character, as in Vim
+# (checked by the Vim oracle); codemirror-vim puts it one past.
+vim_P
+
+# :s leaves the cursor at the first non-blank of the last changed line, as in
+# Vim (checked by the Vim oracle); codemirror-vim leaves it at the last match.
+vim_macro_last_ex_command_register
