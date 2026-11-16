@@ -152,17 +152,59 @@ extension VimTextView {
         context.saveGState()
         context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
         for (line, y) in lines {
-            let current = line == cursorLine
+            // Vim marks the cursor line's number only with 'cursorline'.
+            let current = line == cursorLine && highlightsCursorLineNumber
             let label = lineNumberLabel(line, cursorLine: cursorLine)
             let ctLine = CTLineCreateWithAttributedString(NSAttributedString(string: label, attributes: current ? bright : dim))
             let width = CTLineGetTypographicBounds(ctLine, nil, nil, nil)
             // Hybrid numbers show the cursor line's own number on the left, as Vim does.
-            let x = mode == .hybrid && current ? digit / 2 : right - width
+            let x = mode == .hybrid && line == cursorLine ? digit / 2 : right - width
             let rowTop = ruler.convert(NSPoint(x: 0, y: origin.y + y), from: self).y
             context.textPosition = CGPoint(x: x, y: rowTop + layout.baseline)
             CTLineDraw(ctLine, context)
         }
         context.restoreGState()
+    }
+
+    // MARK: Cursor line
+
+    var highlightsCursorLineNumber: Bool { cursorLineEnabled && cursorLineParts.contains("number") }
+
+    /// The engine's `cursorline` / `cursorlineopt` changed.
+    func cursorLineOptionsChanged() {
+        guard isVimEnabled else { return }
+        cursorLineEnabled = vim.vimOption("cursorline") as? Bool ?? false
+        let opt = (vim.vimOption("cursorlineopt") as? String) ?? "both"
+        var parts = Set(opt.split(separator: ",").map(String.init))
+        if parts.remove("both") != nil { parts.formUnion(["line", "number"]) }
+        cursorLineParts = parts
+        cursorLineSettingsChanged()
+    }
+
+    func cursorLineSettingsChanged() {
+        updateCursorLineRect()
+        lineNumberRuler?.needsDisplay = true
+    }
+
+    /// Where the cursor line highlight goes: the whole width of the cursor's
+    /// line (all its wrapped rows), or only its row with "screenline".
+    func updateCursorLineRect() {
+        var rect: CGRect?
+        if cursorLineEnabled, !cursorLineParts.isDisjoint(with: ["line", "screenline"]) {
+            let offset = max(0, min(numberedCursorOffset, textStorage.length))
+            let row = layoutRect(at: offset)
+            let line = layout.line(containing: offset)
+            if cursorLineParts.contains("screenline") || layout.isHidden(line) {
+                rect = CGRect(x: 0, y: row.minY, width: bounds.width, height: row.height)
+            } else {
+                rect = CGRect(x: 0, y: textOrigin.y + layout.y(ofLine: line), width: bounds.width,
+                              height: CGFloat(layout.visibleRows(ofLine: line)) * lineHeight)
+            }
+        }
+        guard rect != cursorLineRect else { return }
+        if let old = cursorLineRect { setNeedsDisplay(old) }
+        if let rect { setNeedsDisplay(rect) }
+        cursorLineRect = rect
     }
 
     /// The number shown for `line`. Relative numbers count lines a closed

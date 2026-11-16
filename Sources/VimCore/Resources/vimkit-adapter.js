@@ -3177,6 +3177,8 @@
   defineHostOption("number", ["nu"], "boolean", false);
   defineHostOption("relativenumber", ["rnu"], "boolean", false);
   defineHostOption("numberwidth", ["nuw"], "number", 4);
+  defineHostOption("cursorline", ["cul"], "boolean", false);
+  defineHostOption("cursorlineopt", ["culopt"], "string", "both");
   Vim.defineOption("clipboard", "", "string", ["cb"]);
 
   // vim.js's ex command table, for wrapping its commands.

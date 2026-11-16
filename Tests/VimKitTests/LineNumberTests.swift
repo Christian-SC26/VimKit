@@ -84,5 +84,30 @@ struct LineNumberTests {
         view.selectLines(5, 3, extending: true)
         #expect(view.selectedRange() == NSRange(location: view.layout.starts[3], length: view.layout.starts[6] - view.layout.starts[3]))
     }
+
+    @Test func cursorLineFollowsTheCursor() throws {
+        let long = String(repeating: "word ", count: 60)
+        let editor = EditorWindow(text: "one\n\(long)\nthree", size: NSSize(width: 400, height: 300))
+        let view = editor.view
+        #expect(view.cursorLineRect == nil)
+        editor.type(":set cul<CR>")
+        #expect(view.highlightsCursorLine)
+        let first = try #require(view.cursorLineRect)
+        #expect(first.minY == view.textOrigin.y && first.height == view.lineHeight && first.width == view.bounds.width)
+        editor.type("j")
+        let wrapped = try #require(view.cursorLineRect)
+        #expect(wrapped.height == CGFloat(view.layout.visibleRows(ofLine: 1)) * view.lineHeight, "all rows of a wrapped line")
+        #expect(wrapped.height > view.lineHeight)
+        editor.type(":set culopt=screenline<CR>$")
+        let screen = try #require(view.cursorLineRect)
+        #expect(screen.height == view.lineHeight && screen.minY > wrapped.minY, "only the cursor's row")
+        editor.type(":set culopt=number<CR>")
+        #expect(view.cursorLineRect == nil && view.highlightsCursorLineNumber, "number only")
+        editor.type(":set culopt=line nocul<CR>")
+        #expect(view.cursorLineRect == nil && !view.highlightsCursorLineNumber)
+        view.highlightsCursorLine = true
+        #expect(view.vim.vimOption("cursorline") as? Bool == true)
+        #expect(view.cursorLineRect != nil && !view.highlightsCursorLineNumber, "culopt=line: the text, not the number")
+    }
 }
 #endif

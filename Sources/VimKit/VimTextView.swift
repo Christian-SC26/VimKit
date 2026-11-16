@@ -112,6 +112,25 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
     public var currentLineNumberColor: NSColor = .labelColor {
         didSet { lineNumberRuler?.needsDisplay = true }
     }
+    /// Highlight the cursor's line (`:set cursorline`; `:set cursorlineopt`
+    /// picks the text line, its number, or only the wrapped screen row).
+    public var highlightsCursorLine: Bool {
+        get { cursorLineEnabled }
+        set {
+            guard newValue != cursorLineEnabled else { return }
+            if isVimEnabled { vim.setVimOption("cursorline", newValue) }
+            cursorLineEnabled = newValue
+            cursorLineSettingsChanged()
+        }
+    }
+    /// The cursor line's background (translucent, drawn under the text).
+    public var cursorLineColor: NSColor = .labelColor.withAlphaComponent(0.06) {
+        didSet { if let cursorLineRect { setNeedsDisplay(cursorLineRect) } }
+    }
+    var cursorLineEnabled = false
+    /// `cursorlineopt` parts: "line", "screenline", "number".
+    var cursorLineParts: Set<String> = ["line", "number"]
+    var cursorLineRect: CGRect?
     var lineNumberMode: VimLineNumbers = .off
     var lineNumberRuler: VimLineNumberRuler?
     var numberedCursorLine = -1
@@ -531,6 +550,7 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
             return
         }
         lineNumbersCursorMoved()
+        updateCursorLineRect()
         let previous = [blockCursorFrame, caretFrame].compactMap { $0 }
         blockCursorFrame = nil
         invertedCursorRange = nil
@@ -589,6 +609,10 @@ open class VimTextView: NSView, @preconcurrency NSTextInputClient, NSUserInterfa
         if drawsBackground {
             backgroundColor.setFill()
             dirtyRect.fill()
+        }
+        if let cursorLineRect, cursorLineRect.intersects(dirtyRect) {
+            cursorLineColor.setFill()
+            cursorLineRect.intersection(dirtyRect).fill(using: .sourceOver)
         }
         let origin = textOrigin
         let lines = layout.visibleLines(from: dirtyRect.minY - origin.y, to: dirtyRect.maxY - origin.y)
@@ -1292,6 +1316,7 @@ extension VimTextView: VimEngineDelegate {
 
     public func vimEngine(_ engine: VimEngine, didChangeOption name: String) {
         if ["number", "relativenumber", "numberwidth"].contains(name) { lineNumberOptionsChanged() }
+        if ["cursorline", "cursorlineopt"].contains(name) { cursorLineOptionsChanged() }
     }
 
     public func vimEngine(_ engine: VimEngine, tokenTypeAt offset: Int) -> VimTokenType? {

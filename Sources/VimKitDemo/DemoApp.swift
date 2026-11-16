@@ -36,6 +36,7 @@ struct DemoView: View {
     @State private var fileName: String?
     @State private var vimEnabled = true
     @State private var lineNumbers = VimLineNumbers.hybrid
+    @State private var cursorLine = true
     @State private var savedAt: Date?
     @State private var subtitle = DemoView.describe("Sample", DemoView.sample)
 
@@ -43,6 +44,7 @@ struct DemoView: View {
         VimEditor(text: $text)
             .vimEnabled(vimEnabled)
             .vimLineNumbers(lineNumbers)
+            .vimCursorLine(cursorLine)
             .vimOnSave { savedAt = .now }
             .navigationSubtitle(subtitle)
             .toolbar {
@@ -60,6 +62,7 @@ struct DemoView: View {
                     Text("Relative").tag(VimLineNumbers.relative)
                     Text("Hybrid").tag(VimLineNumbers.hybrid)
                 }
+                Toggle("Cursor line", isOn: $cursorLine)
                 Toggle("Vim", isOn: $vimEnabled)
                     .toggleStyle(.switch)
             }

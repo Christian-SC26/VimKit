@@ -93,7 +93,7 @@ logical line as one screen line.
 
 ```swift
 let runtime = VimRuntime.shared
-runtime.execute("set ignorecase smartcase")
+runtime.execute("set clipboard=unnamed")
 runtime.noremap("Y", to: "y$")
 runtime.map("jk", to: "<Esc>", mode: .insert)
 runtime.source(vimrcContents)          // a vimrc-style script
@@ -139,6 +139,12 @@ to the text; it stays in place when the text scrolls sideways. Relative
 numbers count a closed fold as one line, like `j`. Clicking a number moves
 to its line, dragging selects lines. The app sets it with
 `VimEditor(...).vimLineNumbers(.hybrid)` or `textView.lineNumbers`.
+
+`:set cursorline` highlights the cursor's line (`cursorLineColor`), all of
+its wrapped rows; `:set cursorlineopt=screenline` only the row with the
+cursor, `=number` only its number. As in Vim, the cursor line's number is
+highlighted only with `cursorline`. `VimEditor(...).vimCursorLine()` or
+`textView.highlightsCursorLine`.
 
 ### Keyboard layouts
 

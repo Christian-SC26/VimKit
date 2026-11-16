@@ -12,6 +12,10 @@
   visual `P` keeps the register. Macros are key text: they can be pasted,
   edited and run again, replay as typed and stop at the first failing key.
   `VimRuntime.register(_:)`, `setRegister(_:to:)`, `registerNames`.
+- Cursor line on macOS: `:set cursorline` / `cursorlineopt` (line,
+  screenline, number), `VimTextView.highlightsCursorLine`,
+  `cursorLineColor`, `VimEditor.vimCursorLine()`. The cursor line's number
+  is highlighted only with `cursorline`, as in Vim.
 - Line numbers on macOS: `:set number` / `relativenumber` / `numberwidth`,
   `VimTextView.lineNumbers`, `VimEditor.vimLineNumbers(_:)`.
   `VimEngine.vimOption(_:)` / `setVimOption(_:_:)` read and set vim

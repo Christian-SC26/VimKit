@@ -30,6 +30,8 @@ public struct VimEditor: View {
         /// The line number column (macOS). `:set nu` / `:set rnu` change it
         /// in the view; a new value here sets it again.
         public var lineNumbers: VimLineNumbers
+        /// Highlight the cursor's line (macOS), like `:set cursorline`.
+        public var highlightsCursorLine: Bool
         public var onSave: (() -> Void)?
         public var onExCommand: ((VimExCommand) -> Void)?
 
@@ -47,6 +49,7 @@ public struct VimEditor: View {
             textInset: CGSize = CGSize(width: 6, height: 8),
             checksSpelling: Bool = false,
             lineNumbers: VimLineNumbers = .off,
+            highlightsCursorLine: Bool = false,
             onSave: (() -> Void)? = nil,
             onExCommand: ((VimExCommand) -> Void)? = nil
         ) {
@@ -57,6 +60,7 @@ public struct VimEditor: View {
             self.textInset = textInset
             self.checksSpelling = checksSpelling
             self.lineNumbers = lineNumbers
+            self.highlightsCursorLine = highlightsCursorLine
             self.onSave = onSave
             self.onExCommand = onExCommand
         }
@@ -88,6 +92,13 @@ public struct VimEditor: View {
     public func vimEnabled(_ enabled: Bool) -> VimEditor {
         var copy = self
         copy.configuration.isVimEnabled = enabled
+        return copy
+    }
+
+    /// Highlights the cursor's line (macOS), as `:set cursorline` would.
+    public func vimCursorLine(_ enabled: Bool = true) -> VimEditor {
+        var copy = self
+        copy.configuration.highlightsCursorLine = enabled
         return copy
     }
 
@@ -167,6 +178,8 @@ struct VimTextViewRepresentable: NSViewRepresentable {
         scrollView.documentView = textView
         textView.lineNumbers = configuration.lineNumbers
         context.coordinator.appliedLineNumbers = configuration.lineNumbers
+        textView.highlightsCursorLine = configuration.highlightsCursorLine
+        context.coordinator.appliedCursorLine = configuration.highlightsCursorLine
         return scrollView
     }
 
@@ -185,12 +198,17 @@ struct VimTextViewRepresentable: NSViewRepresentable {
             context.coordinator.appliedLineNumbers = configuration.lineNumbers
             textView.lineNumbers = configuration.lineNumbers
         }
+        if context.coordinator.appliedCursorLine != configuration.highlightsCursorLine {
+            context.coordinator.appliedCursorLine = configuration.highlightsCursorLine
+            textView.highlightsCursorLine = configuration.highlightsCursorLine
+        }
     }
 
     @MainActor
     final class Coordinator {
         var parent: VimTextViewRepresentable
         var appliedLineNumbers: VimLineNumbers = .off
+        var appliedCursorLine = false
 
         init(_ parent: VimTextViewRepresentable) {
             self.parent = parent

@@ -47,8 +47,8 @@ public protocol VimEngineDelegate: AnyObject {
     func vimEngine(_ engine: VimEngine, tokenTypeAt offset: Int) -> VimTokenType?
     /// Folds were closed, opened or moved; hide ``VimEngine/folds``.
     func vimEngineFoldsDidChange(_ engine: VimEngine)
-    /// `:set` changed an option the host shows: `number`, `relativenumber`
-    /// or `numberwidth`. Read it with ``VimEngine/vimOption(_:)``.
+    /// `:set` changed an option the host shows: `number`, `relativenumber`,
+    /// `numberwidth`, `cursorline` or `cursorlineopt`. Read it with ``VimEngine/vimOption(_:)``.
     func vimEngine(_ engine: VimEngine, didChangeOption name: String)
 }
 
