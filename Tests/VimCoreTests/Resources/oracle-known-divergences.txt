@@ -41,18 +41,6 @@ ctrl-v-short-lines
 v-ctrl-a
 v-increment-column
 
-# Insert mode: <C-w> and <C-u> fill the unnamed register; <C-u> deletes the
-# whole line instead of the newly typed text; <C-h>, <C-a>, <C-y> are missing;
-# <Left> does not start a new undo step; <BS> in replace mode does not restore.
-insert-ctrl-w
-insert-ctrl-w-punctuation
-insert-ctrl-u
-insert-ctrl-h
-insert-ctrl-a
-insert-ctrl-e-y
-insert-arrow-breaks-undo
-R-backspace-restores
-
 # Macros: a failing motion does not stop the macro; u after @a undoes only
 # the last change; register text is read as key notation (<Esc> in @a).
 macro-stops-on-failure

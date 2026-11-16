@@ -207,13 +207,13 @@ message to that file.
 ### Vim oracle
 
 `OracleTests` compares VimKit with real Vim 9.2. `Tests/Oracle/cases.txt`
-lists 293 cases (starting text, cursor and keys) covering motions,
+lists 298 cases (starting text, cursor and keys) covering motions,
 operators, text objects, visual and insert mode, ex commands, registers,
 macros, numbers and undo. `Tests/Oracle/regenerate.sh` plays each case in a
 fresh Vim and records the text, cursor, mode and unnamed register in
 `Tests/VimCoreTests/Resources/oracle-expected.json`. The test replays the
 keys in VimKit and compares. Vim is needed only to regenerate the file, not
-to run the test. Currently 253 cases match Vim. The other 40 are listed by
+to run the test. Currently 266 cases match Vim. The other 32 are listed by
 cause in `Tests/VimCoreTests/Resources/oracle-known-divergences.txt`; that
 list is the to-do list for matching Vim. The test fails on any other
 difference, when a listed case starts to match, and when `cases.txt` changed

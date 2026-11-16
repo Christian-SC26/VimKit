@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Insert mode as in Vim: `<C-w>` and `<C-u>` leave the registers alone,
+  stop once at the start of the insert and join lines at column 0; `<C-u>`
+  keeps the indent; `<C-h>`, `<C-a>` (insert the last inserted text),
+  `<C-y>` / `<C-e>` (character above / below); a cursor key starts a new
+  undo step; `<BS>` in replace mode puts back what was overwritten.
+  `VimEngine.feed` moves the cursor for arrow keys, Home and End in insert
+  mode.
 - More of Vim, found by the oracle: `:m`, `:t` / `:co`, `:>` / `:<` with
   ranges, counts and `>>`; `:j` with a range, a count and `!`; `:s` with a
   count (`:s/x/y/3`); `:m0`, `:t.`, `:d2` parse as in Vim. `J` adds no space
@@ -20,10 +27,10 @@
   and no longer stops `:g` on a line without a match; "N lines yanked" only
   above 2 lines and no "Found N matches" after `:s` (unless the `n` flag);
   these messages are no longer reported as errors.
-- Vim oracle: `OracleTests` replays 293 cases from `Tests/Oracle/cases.txt`
+- Vim oracle: `OracleTests` replays 298 cases from `Tests/Oracle/cases.txt`
   and compares them with what real Vim 9.2 does, as recorded in
   `oracle-expected.json` by `Tests/Oracle/regenerate.sh`, which also lists
-  where Neovim differs (`Tests/Oracle/NEOVIM.md`). 253 match; the 40
+  where Neovim differs (`Tests/Oracle/NEOVIM.md`). 266 match; the 32
   differences are listed by cause in `oracle-known-divergences.txt`.
 - Registers as in Vim: `"*`/`"+` on the clipboard (`'clipboard'`
   unnamed/unnamedplus), `"%`/`"#` from `VimEngine.fileName` /

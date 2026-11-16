@@ -893,6 +893,12 @@
   };
   proto.overWriteSelection = function (text) {
     var doc = this.doc, len = doc.getLength();
+    // Replace mode remembers what it overwrote, so <BS> can restore it.
+    if (this.sel.ranges.length == 1 && this.sel.ranges[0].anchor === this.sel.ranges[0].head) {
+      var at = this.sel.ranges[0].head, old = at < len ? doc.slice(at, at + 1) : "";
+      if (old == "\n") old = "";
+      (this.$replaced = this.$replaced || []).push({ at: at, length: text.length, original: old });
+    }
     this.$setSel(this.sel.ranges.map(function (r) {
       if (r.anchor === r.head && r.head < len) {
         var ch = doc.slice(r.head, r.head + 1);
@@ -2185,6 +2191,7 @@
     activeCm = this;
     currentEvent = e;
     ensureRegisters();
+    this.$resolveInsertStart();
     if (this.dialog && this.dialog.input) {
       recordPromptKey(e);
       if (!this.$promptRegisterKey(e)) this.$dialogKey(e);
@@ -2214,6 +2221,12 @@
       }
     }
     vim.status = (vim.status || "") + key;
+    // A cursor key in insert mode starts a new undo step, and the insert
+    // starts again where the cursor lands (for <C-w> and <C-u>).
+    if (vim.insertMode && /^<([SCM]-)*(Left|Right|Up|Down|Home|End|PageUp|PageDown)>$/.test(key)) {
+      this.history.close();
+      this.$insertStartPending = true;
+    }
     // <CR> in insert mode breaks the line with 'autoindent' rules (the view
     // would insert a bare line break).
     if (key == "<CR>" && vim.insertMode && !vim.inputState.keyBuffer.length && !vim.expectLiteralNext) {
@@ -2229,7 +2242,7 @@
         this.overWriteSelection(e.key);
       } else if (e.key == "Backspace") {
         result = true;
-        CodeMirror.commands.cursorCharLeft(this);
+        this.$replaceBackspace();
       }
     }
     if (!result && vim.insertMode) vim.status = "";
@@ -2248,6 +2261,16 @@
     if (!vim || !vim.insertMode || e.ctrlKey || e.metaKey) return;
     var text = e.key == "Enter" ? "\n" : e.key == "Tab" ? "\t" : e.key.length == 1 ? e.key : null;
     if (e.key == "Backspace") { this.$deleteChar(-1); return; }
+    // Cursor keys (in a window the text view moves the cursor itself).
+    var cur = this.getCursor(), len = this.getLine(cur.line).length;
+    switch (e.key) {
+      case "ArrowLeft": if (cur.ch > 0) this.setCursor(cur.line, cur.ch - 1); return;
+      case "ArrowRight": if (cur.ch < len) this.setCursor(cur.line, cur.ch + 1); return;
+      case "ArrowUp": if (cur.line > 0) this.setCursor(cur.line - 1, Math.min(cur.ch, this.getLine(cur.line - 1).length)); return;
+      case "ArrowDown": if (cur.line < this.lastLine()) this.setCursor(cur.line + 1, Math.min(cur.ch, this.getLine(cur.line + 1).length)); return;
+      case "Home": this.setCursor(cur.line, 0); return;
+      case "End": this.setCursor(cur.line, len); return;
+    }
     if (e.key == "Delete") { this.$deleteChar(1); return; }
     if (text != null) this.$replaceRanges(function () { return text; }, "end", "+input");
   };
@@ -2313,6 +2336,7 @@
   // dictation, autocorrect).
   proto.hostReplace = function (from, to, text) {
     this.$flushEdits();
+    this.$resolveInsertStart();
     var vim = this.state.vim;
     var grouped = vim && vim.insertMode;
     if (!grouped) this.history.close();
@@ -2331,6 +2355,7 @@
     }, this);
     if (same) return;
     this.$setSel(ranges, primary, true);
+    this.$resolveInsertStart();
     this.$afterDispatch();
   };
   proto.hostSetValue = function (text) {
@@ -3452,6 +3477,85 @@
     cm.setCursor(firstNonBlank(cm, r[0]));
   });
 
+  // ---- insert mode: <C-w>, <C-u>, <C-h>, <C-a>, <C-y>, <C-e>, replace <BS> -----
+
+  // Where this insert started; a cursor key moves it to where it lands.
+  proto.$resolveInsertStart = function () {
+    if (!this.$insertStartPending) return;
+    this.$insertStartPending = false;
+    var vim = this.state.vim;
+    if (vim && vim.insertMode) this.$insertStart = this.getCursor();
+  };
+
+  function isKeywordChar(ch) { return /[\w\u00c0-\uffff]/.test(ch); }
+
+  // <C-w> and <C-u> as in Vim with 'backspace' indent,eol,start: they stop
+  // once at the start of the insert, join lines at column 0, leave the
+  // registers alone, and <C-u> keeps the indent ('autoindent').
+  proto.$insertDelete = function (what) {
+    var cur = this.getCursor(), start = this.$insertStart, text = this.getLine(cur.line), from;
+    var typed = start && start.line == cur.line && start.ch < cur.ch;
+    if (cur.ch == 0) {
+      if (cur.line == 0) return;
+      from = new Pos(cur.line - 1, this.getLine(cur.line - 1).length);
+    } else if (what == "line") {
+      var indent = text.search(/\S/);
+      from = new Pos(cur.line, typed ? start.ch : indent >= 0 && indent < cur.ch ? indent : 0);
+    } else {
+      var ch = cur.ch;
+      while (ch > 0 && /\s/.test(text.charAt(ch - 1))) ch--;
+      if (ch > 0) {
+        var kw = isKeywordChar(text.charAt(ch - 1));
+        while (ch > 0 && !/\s/.test(text.charAt(ch - 1)) && isKeywordChar(text.charAt(ch - 1)) == kw) ch--;
+      }
+      if (typed && ch < start.ch) ch = start.ch;
+      from = new Pos(cur.line, ch);
+    }
+    this.replaceRange("", from, cur, "+delete");
+    this.setCursor(from);
+    if (start && (from.line < start.line || (from.line == start.line && from.ch < start.ch))) this.$insertStart = from;
+  };
+
+  // <BS> in replace mode puts back what was overwritten.
+  proto.$replaceBackspace = function () {
+    var stack = this.$replaced || [], top = stack[stack.length - 1];
+    var head = this.indexFromPos(this.getCursor());
+    if (top && top.at + top.length == head) {
+      stack.pop();
+      this.replaceRange(top.original, this.posFromIndex(top.at), this.posFromIndex(head), "+delete");
+      this.setCursor(this.posFromIndex(top.at));
+    } else {
+      CodeMirror.commands.cursorCharLeft(this);
+    }
+  };
+
+  Vim.defineAction("vimkitInsertDelete", function (cm, args) { cm.$insertDelete(args.what); });
+  Vim._mapCommand({ keys: "<C-w>", type: "action", action: "vimkitInsertDelete", actionArgs: { what: "word" }, context: "insert" });
+  Vim._mapCommand({ keys: "<C-u>", type: "action", action: "vimkitInsertDelete", actionArgs: { what: "line" }, context: "insert" });
+  Vim.defineAction("vimkitInsertBackspace", function (cm) {
+    if (cm.state.overwrite) cm.$replaceBackspace();
+    else cm.$deleteChar(-1);
+  });
+  Vim._mapCommand({ keys: "<C-h>", type: "action", action: "vimkitInsertBackspace", context: "insert" });
+  // <C-a>: the text of the last insert (the "." register).
+  Vim.defineAction("vimkitInsertLast", function (cm) {
+    var text = Vim.getRegisterController().getRegister(".").toString();
+    if (text) cm.replaceSelection(text);
+  });
+  Vim._mapCommand({ keys: "<C-a>", type: "action", action: "vimkitInsertLast", context: "insert" });
+  // <C-y> / <C-e>: the character above / below the cursor, by screen column.
+  Vim.defineAction("vimkitInsertCopyLine", function (cm, args) {
+    var cur = cm.getCursor(), line = cur.line + args.dir;
+    if (line < cm.firstLine() || line > cm.lastLine()) return;
+    var tab = cm.getOption("tabSize"), col = countColumn(cm.getLine(cur.line).slice(0, cur.ch), tab);
+    var text = cm.getLine(line), at = 0, c = 0;
+    while (at < text.length && c < col) { c = countColumn(text.slice(0, at + 1), tab); at++; }
+    if (c != col || at >= text.length) return;
+    cm.replaceSelection(text.charAt(at));
+  });
+  Vim._mapCommand({ keys: "<C-y>", type: "action", action: "vimkitInsertCopyLine", actionArgs: { dir: -1 }, context: "insert" });
+  Vim._mapCommand({ keys: "<C-e>", type: "action", action: "vimkitInsertCopyLine", actionArgs: { dir: 1 }, context: "insert" });
+
   // In normal mode the cursor stays on a character: after a command it is
   // never past the end of the line (~ at the end, :normal A;, ...).
   proto.$clipNormalCursor = function () {
@@ -3585,6 +3689,11 @@
       var cm = new CodeMirror(host, text, options);
       cm.on("vim-mode-change", function (e) {
         if (e.mode != "insert" && e.mode != "replace") cm.$dropAutoIndent();
+        // The insert starts where the first key after entering it finds the
+        // cursor (A, o and the like move it after the mode changes).
+        cm.$insertStart = null;
+        cm.$insertStartPending = e.mode == "insert" || e.mode == "replace";
+        cm.$replaced = [];
         cm.$mode = e.mode || "normal";
         cm.$subMode = e.subMode || "";
         if (cm.state.vim) cm.state.vim.status = "";

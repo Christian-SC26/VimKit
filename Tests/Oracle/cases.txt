@@ -928,6 +928,27 @@ keys o<Esc>
 keys cc<Esc>
 |     abc
 
+[insert-ctrl-w-stops-at-insert-start]
+keys A two<C-w><C-w>X<Esc>
+| one
+
+[insert-ctrl-w-joins-lines]
+keys jI<C-w>X<Esc>
+| one
+| two
+
+[insert-ctrl-u-keeps-indent]
+keys A<C-u>X<Esc>
+|     text
+
+[insert-ctrl-u-after-arrow]
+keys Aab<Left><Left>cd<C-u>X<Esc>
+| xy
+
+[R-backspace-past-start]
+keys lRX<BS><BS><Esc>
+| abc
+
 [R-replace]
 keys RXY<Esc>
 | abcd

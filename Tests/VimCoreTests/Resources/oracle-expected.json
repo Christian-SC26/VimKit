@@ -1,6 +1,6 @@
 {
 "generator": "Vim 9.2.1351",
-"casesSHA256": "5ecf98720b3e24def9d58b5897fcdf8d3c6687df1a8afed781796c2296ff28d2",
+"casesSHA256": "e10d4ade38e8b123c64b3183def72d4ed97ff79242b1d09527aa08bff7933a72",
 "cases": [
 {"name":"w-punctuation","expected":{"registerType":"","column":9,"register":"","line":1,"mode":"n","text":["foo.bar(baz) qux"],"error":""},"at":[1,1],"keys":"wwww","text":["foo.bar(baz) qux"]},
 {"name":"W-bigword","expected":{"registerType":"","column":20,"register":"","line":1,"mode":"n","text":["foo.bar(baz) qux-x end"],"error":""},"at":[1,1],"keys":"WW","text":["foo.bar(baz) qux-x end"]},
@@ -194,6 +194,11 @@
 {"name":"insert-enter-twice-drops-indent","expected":{"registerType":"","column":5,"register":"","line":3,"mode":"n","text":["    ab","","    x"],"error":""},"at":[1,1],"keys":"A<CR><CR>x<Esc>","text":["    ab"]},
 {"name":"o-esc-drops-indent","expected":{"registerType":"","column":1,"register":"","line":2,"mode":"n","text":["    abc",""],"error":""},"at":[1,1],"keys":"o<Esc>","text":["    abc"]},
 {"name":"cc-esc-drops-indent","expected":{"registerType":"V","column":1,"register":"    abc\n","line":1,"mode":"n","text":[""],"error":""},"at":[1,1],"keys":"cc<Esc>","text":["    abc"]},
+{"name":"insert-ctrl-w-stops-at-insert-start","expected":{"registerType":"","column":4,"register":"","line":1,"mode":"n","text":["oneX"],"error":""},"at":[1,1],"keys":"A two<C-w><C-w>X<Esc>","text":["one"]},
+{"name":"insert-ctrl-w-joins-lines","expected":{"registerType":"","column":4,"register":"","line":1,"mode":"n","text":["oneXtwo"],"error":""},"at":[1,1],"keys":"jI<C-w>X<Esc>","text":["one","two"]},
+{"name":"insert-ctrl-u-keeps-indent","expected":{"registerType":"","column":5,"register":"","line":1,"mode":"n","text":["    X"],"error":""},"at":[1,1],"keys":"A<C-u>X<Esc>","text":["    text"]},
+{"name":"insert-ctrl-u-after-arrow","expected":{"registerType":"","column":3,"register":"","line":1,"mode":"n","text":["xyXab"],"error":""},"at":[1,1],"keys":"Aab<Left><Left>cd<C-u>X<Esc>","text":["xy"]},
+{"name":"R-backspace-past-start","expected":{"registerType":"","column":1,"register":"","line":1,"mode":"n","text":["abc"],"error":""},"at":[1,1],"keys":"lRX<BS><BS><Esc>","text":["abc"]},
 {"name":"R-replace","expected":{"registerType":"","column":2,"register":"","line":1,"mode":"n","text":["XYcd"],"error":""},"at":[1,1],"keys":"RXY<Esc>","text":["abcd"]},
 {"name":"R-backspace-restores","expected":{"registerType":"","column":1,"register":"","line":1,"mode":"n","text":["Xbcd"],"error":""},"at":[1,1],"keys":"RXYZ<BS><BS><Esc>","text":["abcd"]},
 {"name":"R-past-end","expected":{"registerType":"","column":4,"register":"","line":1,"mode":"n","text":["aXYZ"],"error":""},"at":[1,1],"keys":"lRXYZ<Esc>","text":["ab"]},
