@@ -197,8 +197,8 @@ xcodebuild test -scheme VimKit-Package \
 ### Upstream test suite
 
 `UpstreamSuiteTests` runs codemirror-vim's own test suite (716 cases)
-through the adapter's real key path in JavaScriptCore. Currently 708 pass.
-The 8 tests VimKit fails on purpose, each with its reason, are listed in
+through the adapter's real key path in JavaScriptCore. Currently 704 pass.
+The 12 tests VimKit fails on purpose, each with its reason, are listed in
 `Tests/VimCoreTests/Resources/upstream-known-failures.txt`. The test fails
 on any other failure, and also when a listed test starts passing. Set
 `VIMKIT_UPSTREAM_REPORT=/path/file.tsv` to write every failure with its
@@ -207,13 +207,13 @@ message to that file.
 ### Vim oracle
 
 `OracleTests` compares VimKit with real Vim 9.2. `Tests/Oracle/cases.txt`
-lists 277 cases (starting text, cursor and keys) covering motions,
+lists 293 cases (starting text, cursor and keys) covering motions,
 operators, text objects, visual and insert mode, ex commands, registers,
 macros, numbers and undo. `Tests/Oracle/regenerate.sh` plays each case in a
 fresh Vim and records the text, cursor, mode and unnamed register in
 `Tests/VimCoreTests/Resources/oracle-expected.json`. The test replays the
 keys in VimKit and compares. Vim is needed only to regenerate the file, not
-to run the test. Currently 224 cases match Vim. The other 53 are listed by
+to run the test. Currently 253 cases match Vim. The other 40 are listed by
 cause in `Tests/VimCoreTests/Resources/oracle-known-divergences.txt`; that
 list is the to-do list for matching Vim. The test fails on any other
 difference, when a listed case starts to match, and when `cases.txt` changed

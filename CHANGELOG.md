@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- More of Vim, found by the oracle: `:m`, `:t` / `:co`, `:>` / `:<` with
+  ranges, counts and `>>`; `:j` with a range, a count and `!`; `:s` with a
+  count (`:s/x/y/3`); `:m0`, `:t.`, `:d2` parse as in Vim. `J` adds no space
+  before `)`, after trailing white space or onto an empty line. `<CR>` in
+  insert mode follows 'autoindent' (the engine handles it, not the view):
+  the new line gets the indent, the white space at the cursor goes, and an
+  indent nothing was typed after is removed (`o<Esc>`, `cc<Esc>`,
+  `<CR><CR>`); `r<CR>` leaves the cursor as Vim does.
 - Matches Vim where the oracle showed it did not: in normal mode the cursor
   never ends past the last character (`~` at the end, `:normal A;`); `P`
   leaves it on the last pasted character; deleting through the last line
@@ -12,10 +20,10 @@
   and no longer stops `:g` on a line without a match; "N lines yanked" only
   above 2 lines and no "Found N matches" after `:s` (unless the `n` flag);
   these messages are no longer reported as errors.
-- Vim oracle: `OracleTests` replays 277 cases from `Tests/Oracle/cases.txt`
+- Vim oracle: `OracleTests` replays 293 cases from `Tests/Oracle/cases.txt`
   and compares them with what real Vim 9.2 does, as recorded in
   `oracle-expected.json` by `Tests/Oracle/regenerate.sh`, which also lists
-  where Neovim differs (`Tests/Oracle/NEOVIM.md`). 224 match; the 53
+  where Neovim differs (`Tests/Oracle/NEOVIM.md`). 253 match; the 40
   differences are listed by cause in `oracle-known-divergences.txt`.
 - Registers as in Vim: `"*`/`"+` on the clipboard (`'clipboard'`
   unnamed/unnamedplus), `"%`/`"#` from `VimEngine.fileName` /

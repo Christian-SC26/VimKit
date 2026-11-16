@@ -409,6 +409,10 @@ keys gJ
 keys rx
 | abc
 
+[r-newline-indent]
+keys fbr<CR>
+|     ab cd
+
 [r-count]
 keys 3rx
 | abcd
@@ -904,6 +908,26 @@ keys liX<CR>Y<Esc>
 keys iab<Left>X<Esc>u
 | z
 
+[insert-enter-strips-space]
+keys fba<CR><Esc>
+|     ab   cd
+
+[insert-enter-keeps-trailing]
+keys fci<CR><Esc>
+|     ab   cd
+
+[insert-enter-twice-drops-indent]
+keys A<CR><CR>x<Esc>
+|     ab
+
+[o-esc-drops-indent]
+keys o<Esc>
+|     abc
+
+[cc-esc-drops-indent]
+keys cc<Esc>
+|     abc
+
 [R-replace]
 keys RXY<Esc>
 | abcd
@@ -1126,6 +1150,65 @@ keys :1,3j<CR>
 | b
 | c
 | d
+
+[join-count]
+keys :j 3<CR>
+| a
+| b
+| c
+| d
+
+[join-single-line-range]
+keys :2,2j<CR>
+| a
+| b
+| c
+
+[move-range-down]
+keys :1,2m3<CR>
+| a
+| b
+| c
+| d
+
+[move-into-itself]
+keys :1,3m2<CR>
+| a
+| b
+| c
+| d
+
+[copy-range-top]
+keys :2,3t0<CR>
+| a
+| b
+| c
+
+[shift-double]
+keys :>><CR>
+| a
+
+[shift-count]
+keys :> 2<CR>
+| a
+| b
+| c
+
+[J-empty-line]
+keys J
+|
+| b
+
+[J-tab-end]
+keys J
+| a	
+| b
+
+[J-visual-three]
+keys VjjJ
+| a
+|   b
+| c
 
 [join-bang]
 keys :j!<CR>

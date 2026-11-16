@@ -3,19 +3,6 @@
 # first oracle run (16.11.2026); each group is a fix to make, after which its
 # names come off this list (the test fails until they do).
 
-# Ex commands that are missing or ignore their range, count or register:
-# :m, :t, :co, :> and :< with a range, :j with a range, :j!, :s with a count.
-move-top
-move-bottom
-g-move-reverse
-copy-line
-copy-to-end
-shift-range
-shift-left-range
-join-range
-join-bang
-s-count-flag
-
 # :s replacement and pattern syntax: \( \) groups with \+, & and \u \U in the
 # replacement, \r for a line break; & g& :&& and
 # & without a previous substitute (E33).
@@ -44,12 +31,6 @@ di-brace-linewise
 d2i-paren
 di-quote-escaped
 da-quote-space
-
-# J adds no space before ")" or after trailing white space; r<CR> drops the
-# white space after the break.
-J-paren
-J-trailing-space
-r-newline
 
 # Visual: v$ includes the line break; cursor after <C-v>A; a block over short
 # lines; <C-a> and g<C-a> in visual mode.

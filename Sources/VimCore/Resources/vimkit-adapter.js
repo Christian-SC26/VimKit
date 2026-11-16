@@ -231,6 +231,9 @@
     return from + (side < 0 ? 0 : len);
   }
 
+  var exNamePattern = /^(\w+|!!|@@|[!#&*<=>@~])/;
+  var numericArgCommand = /^(m|mo|mov|move|t|co|cop|copy|d|de|del|dele|delet|delete|y|ya|yan|yank|j|jo|joi|join|pu|put)\d+$/;
+
   // CodeMirror 5 StringStream (used by vim.js to parse ex commands).
   function StringStream(string, tabSize) {
     this.pos = this.start = 0;
@@ -276,7 +279,13 @@
           return true;
         }
       } else {
+        // vim.js reads an ex command name as \w+; Vim's own commands are
+        // letters, so :m0, :t0 and :d2 are :m 0, :t 0 and :d 2.
         var match = this.string.slice(this.pos).match(pattern);
+        if (match && pattern.source == exNamePattern.source) {
+          var short = numericArgCommand.exec(match[0]);
+          if (short) match = this.string.slice(this.pos).match(new RegExp("^(" + short[1] + ")"));
+        }
         if (match && match.index > 0) return null;
         if (match && consume !== false) this.pos += match[0].length;
         return match;
@@ -525,11 +534,24 @@
         if (end > p.line && p.ch == cm.getLine(p.line).length)
           r.anchor = r.head = cm.indexFromPos(new Pos(end, cm.getLine(end).length));
       });
-      cm.$replaceRanges(function (from, to) {
-        var line = cm.doc.posFromIndex(from).line;
-        var indent = /^[ \t]*/.exec(cm.getLine(line))[0];
-        return "\n" + indent.slice(0, cm.doc.posFromIndex(from).ch);
+      // As Vim with 'autoindent': the new line gets the indent of this one,
+      // the white space the cursor was on goes, and an indent nothing was
+      // typed after (<CR><CR>, o<Esc>) is removed.
+      var indents = [], auto = cm.$autoIndent;
+      cm.sel.ranges.forEach(function (r, i) {
+        var p = cm.doc.posFromIndex(Math.min(r.anchor, r.head)), text = cm.getLine(p.line);
+        indents[i] = /^[ \t]*/.exec(text)[0].slice(0, p.ch);
+        if (r.anchor != r.head) return;
+        r.head += /^[ \t]*/.exec(text.slice(p.ch))[0].length;
+        if (auto && auto.line == p.line && text == auto.text && p.ch == text.length) r.anchor -= p.ch;
+      });
+      var newLines = [];
+      cm.$replaceRanges(function (from, to, i) {
+        newLines.push(indents[i]);
+        return "\n" + indents[i];
       }, "end");
+      var cur = cm.getCursor();
+      cm.$autoIndent = newLines.length == 1 && newLines[0] ? { line: cur.line, text: newLines[0] } : null;
     },
     indentAuto: function (cm) { cm.indentAuto(); },
     toggleLineComment: function (cm) { cm.toggleLineComment(); },
@@ -2192,6 +2214,13 @@
       }
     }
     vim.status = (vim.status || "") + key;
+    // <CR> in insert mode breaks the line with 'autoindent' rules (the view
+    // would insert a bare line break).
+    if (key == "<CR>" && vim.insertMode && !vim.inputState.keyBuffer.length && !vim.expectLiteralNext) {
+      CodeMirror.commands.newlineAndIndent(this);
+      this.$flush();
+      return true;
+    }
     var result = Vim.multiSelectHandleKey(this, key, "user");
     vim = Vim.maybeInitVimState_(this);
     if (!result && vim.insertMode && this.state.overwrite) {
@@ -3221,6 +3250,45 @@
       return result;
     };
 
+    // r<CR> ends like typing <CR><Esc>: the cursor before the new indent.
+    var replace = vimActions.replace;
+    vimActions.replace = function (cm, args, vim) {
+      var result = replace.apply(this, arguments);
+      if (args.selectedCharacter == "\n" && !vim.visualMode) {
+        var cur = cm.getCursor();
+        if (cur.ch > 0) cm.setCursor(cur.line, cur.ch - 1);
+      }
+      return result;
+    };
+
+    // cc / S keep the indent; with nothing typed, <Esc> removes it again.
+    var change = vimOperators.change;
+    vimOperators.change = function (cm, args) {
+      var result = change.apply(this, arguments);
+      if (args.linewise && cm.state.vim.insertMode) {
+        var cur = cm.getCursor(), text = cm.getLine(cur.line);
+        cm.$autoIndent = text && /^[ \t]+$/.test(text) && cur.ch == text.length ? { line: cur.line, text: text } : null;
+      }
+      return result;
+    };
+
+    vimActions.joinLines = function (cm, args, vim) {
+      var from, to;
+      if (vim.visualMode) {
+        var a = cm.getCursor("anchor"), h = cm.getCursor("head");
+        from = Math.min(a.line, h.line);
+        to = Math.max(a.line, h.line);
+        if (to == from) to++;
+      } else {
+        from = cm.getCursor().line;
+        to = from + Math.max(args.repeat, 2) - 1;
+      }
+      to = Math.min(to, cm.lastLine());
+      var pos = to > from ? joinRange(cm, from, to, args.keepSpaces) : cm.getCursor();
+      if (vim.visualMode) Vim.exitVisualMode(cm, false);
+      cm.setCursor(pos);
+    };
+
     // Linewise deletes through the last line (dd there, dG, :$d, :g/x/d):
     // remove the line break before them, store just the lines ("c\n", not
     // "\nc\n"), and leave no empty line behind.
@@ -3252,6 +3320,137 @@
     var reg = Vim.getRegisterController().getRegister("/");
     return reg ? reg.toString() : "";
   }
+
+  // Leaving insert mode on a line that holds only the indent 'autoindent'
+  // gave it (o<Esc>) empties the line, as in Vim.
+  proto.$dropAutoIndent = function () {
+    var auto = this.$autoIndent;
+    this.$autoIndent = null;
+    if (!auto || auto.line > this.lastLine() || this.getCursor().line != auto.line) return;
+    if (this.getLine(auto.line) !== auto.text) return;
+    this.replaceRange("", new Pos(auto.line, 0), new Pos(auto.line, auto.text.length));
+    this.setCursor(auto.line, 0);
+  };
+
+  // ---- ex commands vim.js lacks or gets wrong: :m, :t, :co, :>, :<, :j --------
+
+  // An ex address: N, ., $ or 'x, with +N / -N offsets; -1 is address 0.
+  function parseAddress(cm, text) {
+    var m = /^\s*(\d+|\.|\$|'.)?((?:\s*[+-]\d*)*)\s*$/.exec(text || "");
+    if (!m || (!m[1] && !m[2])) return null;
+    var line;
+    if (!m[1] || m[1] == ".") line = cm.getCursor().line;
+    else if (m[1] == "$") line = cm.lastLine();
+    else if (m[1].charAt(0) == "'") {
+      var mark = cm.state.vim.marks[m[1].charAt(1)], p = mark && mark.find();
+      if (!p) return null;
+      line = p.line;
+    } else line = +m[1] - 1;
+    (m[2].match(/[+-]\d*/g) || []).forEach(function (o) {
+      line += (o.charAt(0) == "-" ? -1 : 1) * (o.length > 1 ? +o.slice(1) : 1);
+    });
+    return line;
+  }
+  function exRange(params) {
+    var line = params.selectionLine, end = params.selectionLineEnd;
+    if (end == null || isNaN(end)) end = line;
+    return line <= end ? [line, end] : [end, line];
+  }
+  function linesOf(cm, from, to) {
+    var out = [];
+    for (var i = from; i <= to; i++) out.push(cm.getLine(i));
+    return out;
+  }
+  // Inserts whole lines after line `at` (-1: before the first line).
+  function insertLines(cm, at, lines) {
+    if (at < 0) cm.replaceRange(lines.join("\n") + "\n", new Pos(0, 0));
+    else cm.replaceRange("\n" + lines.join("\n"), new Pos(at, cm.getLine(at).length));
+  }
+  function deleteLines(cm, from, to) {
+    var last = cm.lastLine();
+    if (to < last) cm.replaceRange("", new Pos(from, 0), new Pos(to + 1, 0));
+    else if (from > 0) cm.replaceRange("", new Pos(from - 1, cm.getLine(from - 1).length), new Pos(to, cm.getLine(to).length));
+    else cm.replaceRange("", new Pos(0, 0), new Pos(to, cm.getLine(to).length));
+  }
+
+  // :[range]m {address}
+  Vim.defineEx("movelines", "m", function (cm, params) {
+    var r = exRange(params), dest = parseAddress(cm, params.argString);
+    if (dest == null || dest < -1 || dest > cm.lastLine()) { showMessage(cm, "E14: Invalid address", true); return; }
+    if (dest >= r[0] && dest < r[1]) { showMessage(cm, "E134: Cannot move a range of lines into itself", true); return; }
+    var count = r[1] - r[0] + 1, at = dest;
+    if (dest != r[1] && dest != r[0] - 1) {
+      var lines = linesOf(cm, r[0], r[1]);
+      deleteLines(cm, r[0], r[1]);
+      if (dest > r[1]) at = dest - count;
+      insertLines(cm, at, lines);
+    } else {
+      at = r[0] - 1;
+    }
+    cm.setCursor(firstNonBlank(cm, at + count));
+  });
+
+  // :[range]t {address}, :[range]co[py] {address}
+  function copyLines(cm, params) {
+    var r = exRange(params), dest = parseAddress(cm, params.argString);
+    if (dest == null || dest < -1 || dest > cm.lastLine()) { showMessage(cm, "E14: Invalid address", true); return; }
+    insertLines(cm, dest, linesOf(cm, r[0], r[1]));
+    cm.setCursor(firstNonBlank(cm, dest + r[1] - r[0] + 1));
+  }
+  Vim.defineEx("copy", "co", copyLines);
+  Vim.defineEx("t", "t", copyLines);
+
+  // :[range]> [count], :[range]>> ... and the same with <.
+  function shiftLines(right) {
+    return function (cm, params) {
+      var r = exRange(params), m = /^([<>]*)\s*(\d*)\s*$/.exec(params.argString || "");
+      if (!m) { showMessage(cm, "E488: Trailing characters: " + params.argString, true); return; }
+      var times = 1 + m[1].length;
+      if (m[2]) { r[0] = r[1]; r[1] = Math.min(r[0] + +m[2] - 1, cm.lastLine()); }
+      for (var i = r[0]; i <= r[1]; i++) {
+        if (!cm.getLine(i).length) continue; // Vim leaves empty lines alone
+        for (var k = 0; k < times; k++) cm.indentLine(i, right);
+      }
+      cm.setCursor(firstNonBlank(cm, r[1]));
+    };
+  }
+  Vim.defineEx(">", ">", shiftLines(true));
+  Vim.defineEx("<", "<", shiftLines(false));
+
+  // J and gJ as in Vim: no space before ")", after a line that ends in white
+  // space, or when the text so far is empty; gJ keeps all white space.
+  function joinRange(cm, from, to, keepSpaces) {
+    var finalCh = 0;
+    for (var i = from; i < to; i++) {
+      var cur = cm.getLine(from), next = cm.getLine(from + 1);
+      var start = 0, text = "";
+      if (!keepSpaces) {
+        start = next.search(/\S/);
+        if (start < 0) start = next.length;
+        var rest = next.slice(start), end = cur.charAt(cur.length - 1);
+        if (rest && rest.charAt(0) != ")" && cur.length && end != " " && end != "\t") text = " ";
+      }
+      finalCh = cur.length;
+      cm.replaceRange(text, new Pos(from, cur.length), new Pos(from + 1, start));
+    }
+    var len = cm.getLine(from).length;
+    return new Pos(from, Math.max(Math.min(finalCh, len - 1), 0));
+  }
+
+  // :[range]j[oin][!] [count]
+  Vim.defineEx("join", "j", function (cm, params) {
+    var line = params.selectionLine, end = params.selectionLineEnd;
+    var hasRange = end != null && !isNaN(end);
+    var arg = params.argString || "", bang = /^!/.test(arg);
+    var m = /^!?\s*(\d*)\s*$/.exec(arg);
+    if (!m) { showMessage(cm, "E488: Trailing characters: " + arg, true); return; }
+    var r = hasRange ? exRange(params) : [line, line];
+    if (m[1]) r = [r[1], r[1] + +m[1] - 1];
+    else if (!hasRange) r[1]++;
+    r[1] = Math.min(r[1], cm.lastLine());
+    if (r[1] > r[0]) joinRange(cm, r[0], r[1], bang);
+    cm.setCursor(firstNonBlank(cm, r[0]));
+  });
 
   // In normal mode the cursor stays on a character: after a command it is
   // never past the end of the line (~ at the end, :normal A;, ...).
@@ -3303,6 +3502,8 @@
     var substitute = exCommands.substitute;
     exCommands.substitute = function (cm, params) {
       var note = cm.notification, callback = params.callback, dialog = cm.dialog;
+      var parts = /^(\W)((?:\\.|(?!\1).)*)\1((?:\\.|(?!\1).)*)\1([&cegiInp#lr]*)\s*(\d+)\s*$/.exec(params.argString || "");
+      if (parts) params.argString = parts[1] + parts[2] + parts[1] + parts[3] + parts[1] + parts[4] + " " + parts[5];
       var result = substitute.apply(this, arguments);
       var now = cm.notification, fresh = now && now !== note ? now.text : "";
       var m = /^(\W)((?:\\.|(?!\1).)*)/.exec(params.argString || "");
@@ -3383,6 +3584,7 @@
     createEditor: function (host, text, options) {
       var cm = new CodeMirror(host, text, options);
       cm.on("vim-mode-change", function (e) {
+        if (e.mode != "insert" && e.mode != "replace") cm.$dropAutoIndent();
         cm.$mode = e.mode || "normal";
         cm.$subMode = e.subMode || "";
         if (cm.state.vim) cm.state.vim.status = "";

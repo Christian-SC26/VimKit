@@ -22,3 +22,13 @@ vim_P
 # :s leaves the cursor at the first non-blank of the last changed line, as in
 # Vim (checked by the Vim oracle); codemirror-vim leaves it at the last match.
 vim_macro_last_ex_command_register
+
+# J adds no space after a line that ends in white space, as in Vim (checked by
+# the Vim oracle); codemirror-vim keeps it and adds one more.
+vim_J
+vim_J_repeat
+vim_visual_join_blank
+
+# S<Esc> (and cc<Esc>, o<Esc>) with nothing typed removes the indent, as in
+# Vim with 'autoindent' (checked by the Vim oracle); codemirror-vim keeps it.
+vim_S_normal
